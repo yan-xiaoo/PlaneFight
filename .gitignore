@@ -1,0 +1,12 @@
+__pycache__/**
+*.DS_STORE
+new.py
+new2.py
+venv/**
+/.idea/misc.xml
+/.idea/modules.xml
+/data/plane_full.png
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/SmallTermGame.iml
+/.idea/vcs.xml
