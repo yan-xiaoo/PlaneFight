@@ -8,7 +8,6 @@ if not pygame.get_init():
 # 窗口的尺寸（宽，高）
 SCREEN_RECT = pygame.rect.Rect(0, 0, 640, 480)
 
-
 # 规定普通飞机不同难度下的数据
 # speed: 该难度下飞机速度的上下限（像素/秒）
 DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3), "full_time": 0.5},
@@ -22,6 +21,7 @@ class CommonSprite(pygame.sprite.Sprite):
     """
     该游戏中所有sprite的基类，支持每隔一段时间轮播图片
     """
+
     def __init__(self, images, center, change_time: float = None, *group):
         """
         创建一个sprite，并在图片多于一张时每change_time更换一次图片
@@ -131,6 +131,7 @@ class Explosion(CommonSprite):
     爆炸特效
     在我方或敌方飞机坏掉的时候都会出现该特效
     """
+
     def __init__(self, images, center, *group):
         super().__init__(images, center, 0.2, *group)
         self.images = images
@@ -161,6 +162,7 @@ class PlayerBullet(CommonSprite):
     """
     我方用来击打敌方的子弹
     """
+
     def __init__(self, images, center, *group):
         center = list(center)
         center[0] = center[0] + 35
@@ -179,6 +181,7 @@ class ScoreBoard(CommonSprite):
     """
     记分板
     """
+
     def __init__(self, center, *group):
         self.score = 0
         self.font = pygame.sysfont.SysFont("arial", 30)
@@ -196,6 +199,7 @@ class WinMenu(CommonSprite):
     """
     胜利菜单
     """
+
     def __init__(self, center, score, *group):
         self.font = pygame.sysfont.SysFont("arial", 30)
         self.text = self.font.render(f"You Win! Score: {score}", True, (255, 0, 0))
@@ -264,9 +268,13 @@ def main():
     # 初始没有暂停
     paused = False
     # 初始游戏没有结束
-    ended = True
+    playing = True
+    # 初始没有胜利
+    win = False
     # 存放需要在玩家死后更新的对象，一般是爆炸特效，平时不会更新这些内容
-    after_ended = pygame.sprite.RenderUpdates()
+    after_player_dead = pygame.sprite.RenderUpdates()
+    # 存放玩家胜利后还需要更新的对象
+    after_player_win = pygame.sprite.RenderUpdates()
     # 用于控制帧率
     clock = pygame.time.Clock()
     # 初始不展示帧率
@@ -280,7 +288,7 @@ def main():
     # 记分板
     score_board = ScoreBoard((70, 50), all_objects)
     # 胜利界面
-    win_menu = WinMenu(SCREEN_RECT.center, 0, after_ended)
+    win_menu = WinMenu(SCREEN_RECT.center, 0, after_player_win)
     # 难度，默认为0
     difficulty = 0
     while running:
@@ -298,15 +306,14 @@ def main():
                 show_fps = not show_fps
             if key_event.key == QUIT_KEY:
                 running = False
-        for mouse_event in pygame.event.get(pygame.MOUSEBUTTONDOWN):
-            if mouse_event.button == pygame.BUTTON_LEFT and fire_cd <= 0:
-                fire_cd = total_fire_cd
-                PlayerBullet([shot_image], player.rect.midtop, bullet_group, all_objects)
+        if pygame.mouse.get_pressed(3)[0] and fire_cd <= 0:
+            fire_cd = total_fire_cd
+            PlayerBullet([shot_image], player.rect.midtop, bullet_group, all_objects)
 
         # 暂停时相当于除了处理时间外，其他所有内容停止运行
         # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
         # 下面是游戏循环主要内容：
-        if not paused and ended:
+        if not paused and playing:
             keys_pressed = pygame.key.get_pressed()
             # 玩家移动, 注意diff单位为毫秒
             player.move(keys_pressed[pygame.K_d] - keys_pressed[pygame.K_a]
@@ -321,10 +328,12 @@ def main():
             for sprite in enemy.sprites():
                 sprite.rect = sprite.large_rect
             for one_enemy in pygame.sprite.spritecollide(player, enemy, True):
-                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, after_ended, explosion_group)
-                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], player.rect.center, after_ended, explosion_group)
+                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
+                          after_player_dead, explosion_group)
+                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], player.rect.center,
+                          after_player_dead, explosion_group)
                 player.kill()
-                ended = False
+                playing = False
 
             # 玩家开火
             fire_cd -= diff / 1000
@@ -339,13 +348,15 @@ def main():
             for one_enemy in pygame.sprite.groupcollide(enemy, bullet_group, False, True).keys():
                 if one_enemy.full_time <= 0:
                     score_board.score += 10
-                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, all_objects, explosion_group)
+                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
+                              all_objects, explosion_group)
                     one_enemy.kill()
 
             for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, False, False).keys():
                 if one_enemy.full_time <= 0:
                     score_board.score += 10
-                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, all_objects, explosion_group)
+                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
+                              all_objects, explosion_group)
                     one_enemy.kill()
 
             for explosion_sprite in explosion_group.sprites():
@@ -356,14 +367,16 @@ def main():
             if 200 > score_board.score >= 100:
                 difficulty = 1
                 win_menu.score = score_board.score
-                ended = False
+                playing = False
+                win = True
             elif 300 > score_board.score >= 200:
                 difficulty = 2
             elif 350 > score_board.score >= 300:
                 difficulty = 3
             elif score_board.score >= 350:
                 win_menu.score = score_board.score
-                ended = False
+                playing = False
+                win = True
 
             # 如果敌人全都寄了，就再召唤一批
             if len(enemy) == 0:
@@ -386,9 +399,13 @@ def main():
                 fps_sprite.rect = fps_sprite.image.get_rect()
 
         # 玩家死后只允许部分内容（after_player_dead组中的）被更新
-        if not ended:
-            after_ended.update(diff / 1000)
-            dirty_rects.extend(after_ended.draw(screen))
+        if not playing and not win:
+            after_player_dead.update(diff / 1000)
+            dirty_rects.extend(after_player_dead.draw(screen))
+
+        if not playing and win:
+            after_player_win.update(diff / 1000)
+            dirty_rects.extend(after_player_win.draw(screen))
 
         pygame.display.update(dirty_rects)
         # 根据配置限制帧率
