@@ -65,14 +65,16 @@ class Player(CommonSprite):
     代表玩家的飞机
     """
 
-    def __init__(self, images, center, *group):
+    def __init__(self, images, center, fire=None, *group):
         super().__init__(images, center, None, *group)
         # 减小玩家的碰撞箱，降低撞到敌机的可能
         self.rect.width = 45
         self.rect.height = 40
         # 速度：300像素每秒
         self.speed = 300
+        self.fire_sprite = CommonSprite([fire], (self.rect.centerx, self.rect.centery + 35))
 
+    # noinspection PyTypeChecker
     def move(self, vertical_direction=0, horizontal_direction=0,
              dt=1 / MAX_RATE if MAX_RATE is not None else 1 / 60) -> None:
         """
@@ -86,6 +88,12 @@ class Player(CommonSprite):
         horizontal_direction = 1 if horizontal_direction > 0 else -1 if horizontal_direction < 0 else 0
         self.rect.move_ip(self.speed * vertical_direction * dt, self.speed * horizontal_direction * dt)
         self.rect = self.rect.clamp(SCREEN_RECT)
+        if horizontal_direction == -1:
+            self.groups()[0].add(self.fire_sprite)
+            self.fire_sprite.rect.centerx = self.rect.centerx + 35
+            self.fire_sprite.rect.centery = self.rect.centery + 75
+        else:
+            self.groups()[0].remove(self.fire_sprite)
 
 
 class Enemy(CommonSprite):
@@ -240,13 +248,13 @@ class FPSView(widget.Text):
 def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Surface], difficulty: int = 0) -> None:
     """
     以difficulty为难度等级召唤出amount个普通飞机敌人（不是boss）加入groups中
-    :param images: 这些敌人所使用的一些图片（可以只有一张，多张的情况下会轮播）
+    :param images: 这些敌人所使用的一些图片（可以只有一张，多张的情况下会随机选择一张）
     :param groups: 这些召唤出的敌人需要被加入的组
     :param difficulty: 这些召唤的敌人的难度，详情见difficulty字典边上的注释。难度影响飞机速度的上下限,一批飞机多少等
     :return: 无
     """
     for _ in range(random.randint(*DIFFICULTY[difficulty]['batch'])):
-        e = Enemy(images, *groups)
+        e = Enemy([random.choice(images)], *groups)
         e.speed = random.randint(*DIFFICULTY[difficulty]['speed'])
         e.full_time = DIFFICULTY[difficulty]['full_time']
 
@@ -262,9 +270,12 @@ class MainApp:
 
         # 加载游戏资源，这样重新开始游戏时不用再加载了
         self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
-        self.enemy_image = resource.load("./data/enemy_1.png", True).convert_alpha()
+        self.enemy_images = [resource.load(f"./data/enemy_{i}.png", True).convert_alpha() for i in range(1, 4)]
+
         self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
         self.shot_image = resource.load('./data/shot.gif', True).convert_alpha()
+
+        self.fire_image = resource.load("data/fire.png", False, pygame.Surface((0, 0))).convert_alpha()
 
         # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
         self.running = False
@@ -323,7 +334,7 @@ class MainApp:
         # 难度，默认为0
         difficulty = 0
         # 玩家
-        player = Player([self.plane_image], SCREEN_RECT.center, all_objects)
+        player = Player([self.plane_image], SCREEN_RECT.center, self.fire_image, all_objects)
         # 敌人
         enemy = pygame.sprite.Group()
         # 爆炸特效
@@ -377,6 +388,7 @@ class MainApp:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
                               player.rect.center,
                               after_player_dead, explosion_group)
+                    player.fire_sprite.kill()
                     player.kill()
                     playing = False
 
@@ -413,9 +425,6 @@ class MainApp:
                 # 检测成绩调整难度
                 if 200 > score_board.score >= 100:
                     difficulty = 1
-                    win_menu.score = score_board.score
-                    playing = False
-                    win = True
                 elif 300 > score_board.score >= 200:
                     difficulty = 2
                 elif 350 > score_board.score >= 300:
@@ -427,7 +436,7 @@ class MainApp:
 
                 # 如果敌人全都寄了，就再召唤一批
                 if len(enemy) == 0:
-                    spawn_simple_enemy([enemy, all_objects], [self.enemy_image], difficulty)
+                    spawn_simple_enemy([enemy, all_objects], self.enemy_images, difficulty)
 
                 # 这里是绘制所有物体
                 all_objects.clear(self.screen, self.background)
