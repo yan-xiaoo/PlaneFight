@@ -224,7 +224,7 @@ class FPSView(widget.Text):
     """
 
     def __init__(self, center, *group):
-        super().__init__(text="FPS: 0", center=center, font='arial', color=(255, 0, 0), font_size=30, group=group)
+        super().__init__(text="FPS: 0", center=center, font='arial', color=(0, 0, 255), font_size=30, group=group)
         self.fps = 0
 
     @property
@@ -259,11 +259,6 @@ class MainApp:
         # 这张图是示例里的aliens.py用的，感觉很适合主题就拿来了
         self.background_image = resource.load("./data/background.gif", True)
         self.background = pygame.surface.Surface(SCREEN_RECT.size)
-        # 由于这张图片特别窄（左右距离小），但左右侧衔接很自然，所以不断从左向右绘制该图片，直至它填满屏幕
-        for tile in range(0, SCREEN_RECT.width, self.background_image.get_width()):
-            self.background.blit(self.background_image, (tile, 0))
-        self.screen.blit(self.background, (0, 0))
-        pygame.display.flip()
 
         # 加载游戏资源，这样重新开始游戏时不用再加载了
         self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
@@ -271,10 +266,20 @@ class MainApp:
         self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
         self.shot_image = resource.load('./data/shot.gif', True).convert_alpha()
 
+        # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
+        self.running = False
+
     def start(self):
+        # 由于这张图片特别窄（左右距离小），但左右侧衔接很自然，所以不断从左向右绘制该图片，直至它填满屏幕
+        for tile in range(0, SCREEN_RECT.width, self.background_image.get_width()):
+            self.background.blit(self.background_image, (tile, 0))
+        self.screen.blit(self.background, (0, 0))
+        # 重新绘制背景图片，不然会发现上局游戏的飞机还留在这当背景（
+        pygame.display.flip()
+
         # 初始化游戏控制内容
         # 初始处于运行状态
-        running = True
+        self.running = True
         # 初始没有暂停
         paused = False
         # 初始游戏没有结束
@@ -287,6 +292,8 @@ class MainApp:
         after_player_dead = pygame.sprite.RenderUpdates()
         # 存放玩家胜利后还需要更新的对象
         after_player_win = pygame.sprite.RenderUpdates()
+        # 存放暂停时允许更新的对象
+        paused_objects = pygame.sprite.RenderUpdates()
         # 用于控制帧率
         clock = pygame.time.Clock()
         # 初始不展示帧率
@@ -297,14 +304,22 @@ class MainApp:
         total_fire_cd = 0.25
         # 开火的剩余cd
         fire_cd = 0
-        # 记分板
 
         # 初始化游戏对象
+        # 记分板
         score_board = ScoreBoard((70, 50), all_objects)
         # 胜利界面
         win_menu = WinMenu(SCREEN_RECT.center, 0, after_player_win)
+        # 失败界面
+        widget.Text(text="You Lose!", center=SCREEN_RECT.center, font='arial', color=(255, 0, 0), font_size=50, group=[after_player_dead])
+        # 暂停界面
+        widget.Text(text="Paused", center=SCREEN_RECT.center, font='arial', color=(0, 0, 255), font_size=50, group=[paused_objects])
+        # 重玩按钮
+        widget.Button(center=(SCREEN_RECT.centerx, SCREEN_RECT.centery + 100), text="Replay",
+                      group=[after_player_win, after_player_dead],
+                      command=self.replay_game)
         # 用于显示帧率的对象
-        fps_view = FPSView((SCREEN_RECT.width - 100, 50), all_objects)
+        fps_view = FPSView((50, SCREEN_RECT.height - 35), all_objects, paused_objects)
         # 难度，默认为0
         difficulty = 0
         # 玩家
@@ -316,21 +331,22 @@ class MainApp:
         # 子弹
         player_bullet_group = pygame.sprite.Group()
 
-        while running:
+        while self.running:
             dirty_rects = []
             # 这部分专门处理事件
             events = pygame.event.get(pygame.QUIT)
             if events:
                 # 在一轮循环结束后退出游戏
-                running = False
+                self.running = False
             for key_event in pygame.event.get(pygame.KEYDOWN):
                 # 如果按下的按键为配置文件中的暂停键，那么切换暂停状态
-                if key_event.key == PAUSE_KEY:
+                # 只有还在玩的时候才能暂停
+                if key_event.key == PAUSE_KEY and playing:
                     paused = not paused
                 if key_event.key == FPS_KEY:
                     show_fps = not show_fps
                 if key_event.key == QUIT_KEY:
-                    running = False
+                    self.running = False
             if pygame.mouse.get_pressed(3)[0] and fire_cd <= 0:
                 fire_cd = total_fire_cd
                 PlayerBullet([self.shot_image], player.rect.midtop, player_bullet_group, all_objects)
@@ -339,6 +355,8 @@ class MainApp:
             # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
             # 下面是游戏循环主要内容：
             if not paused and playing:
+                # 清除可能存在的暂停界面，不然会很难看
+                paused_objects.clear(self.screen, self.background)
                 keys_pressed = pygame.key.get_pressed()
                 # 玩家移动, 注意diff单位为毫秒
                 player.move(keys_pressed[pygame.K_d] - keys_pressed[pygame.K_a]
@@ -415,11 +433,11 @@ class MainApp:
                 all_objects.clear(self.screen, self.background)
                 dirty_rects.extend(all_objects.draw(self.screen))
 
-                # 绘制帧率(如果设置了要显示帧率)
-                if show_fps:
-                    fps_view.fps = clock.get_fps()
-                else:
-                    fps_view.image = pygame.Surface((0, 0))
+            # 绘制帧率(如果设置了要显示帧率)
+            if show_fps:
+                fps_view.fps = "{:.2f}".format(clock.get_fps())
+            else:
+                fps_view.image = pygame.Surface((0, 0))
 
             # 玩家死后只允许部分内容（after_player_dead组中的）被更新
             if not playing and not win:
@@ -430,6 +448,11 @@ class MainApp:
                 after_player_win.update(diff / 1000)
                 dirty_rects.extend(after_player_win.draw(self.screen))
 
+            if paused:
+                paused_objects.clear(self.screen, self.background)
+                paused_objects.update(diff / 1000)
+                dirty_rects.extend(paused_objects.draw(self.screen))
+
             pygame.display.update(dirty_rects)
             # 根据配置限制帧率
             if MAX_RATE is not None:
@@ -437,6 +460,10 @@ class MainApp:
             else:
                 # 只计算上一帧到这一帧的时间间隔，不等待
                 diff = clock.tick()
+
+    def replay_game(self, *args):
+        self.running = False
+        self.start()
 
 
 def main():
