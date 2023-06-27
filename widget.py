@@ -14,7 +14,10 @@ class Text(pygame.sprite.Sprite):
     def __init__(self, text: str, center, font: str = 'arial',
                  font_size: int = 20, color=(255, 0, 0),
                  background=None, group=None):
-        self.font = pygame.font.SysFont(name=font, size=font_size)
+        if not isinstance(font, pygame.font.Font):
+            self.font = pygame.font.SysFont(name=font, size=font_size)
+        else:
+            self.font = font
         self._text = ''
         self.image = self.font.render(text, True, color, background)
 

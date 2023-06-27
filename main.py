@@ -12,10 +12,14 @@ SCREEN_RECT = pygame.rect.Rect(0, 0, 640, 480)
 
 # 规定普通飞机不同难度下的数据
 # speed: 该难度下飞机速度的上下限（像素/秒）
-DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3), "full_time": 0.5, "fire": True},
-              1: {'speed': (175, 225), "batch": (2, 4), "full_time": 0.4, "fire": False},
-              2: {'speed': (200, 250), "batch": (2, 6), "full_time": 0.3, "fire": True},
-              3: {'speed': (225, 275), "batch": (3, 6), "full_time": 0.25, "fire": True},
+# batch: 该难度下一次出飞机数量的上下限
+# full_time: 飞机出场时具有一小段无敌时间（防止被爆炸连环炸干净）
+# fire: 飞机能否可开火
+# chase: 飞机子弹是否可追踪
+DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3), "full_time": 0.5, "fire": False, "chase": False},
+              1: {'speed': (175, 225), "batch": (2, 4), "full_time": 0.4, "fire": False, "chase": False},
+              2: {'speed': (175, 250), "batch": (2, 5), "full_time": 0.3, "fire": True, "chase": False},
+              3: {'speed': (175, 250), "batch": (3, 5), "full_time": 0.25, "fire": True, "chase": True},
               }
 
 
@@ -123,6 +127,8 @@ class Enemy(CommonSprite):
         self.fire_cd = self.total_fire_cd = 1
         # 敌机发射过的子弹
         self.bullets = []
+        # 发射的子弹是否为追踪弹
+        self.chase = False
 
     def update(self, dt, *args) -> None:
         """
@@ -148,7 +154,10 @@ class Enemy(CommonSprite):
     def fire(self, images, *group):
         if self.fire_cd <= 0:
             self.fire_cd = self.total_fire_cd
-            self.bullets.append(HardEnemyBullet(images, self.rect.center, 0.75, *group))
+            if self.chase:
+                self.bullets.append(HardEnemyBullet(images, self.rect.center, 0.75, *group))
+            else:
+                self.bullets.append(EnemyBullet(images, self.rect.center, *group))
 
     def kill(self):
         for one_bullet in self.bullets:
@@ -258,9 +267,9 @@ class ScoreBoard(widget.Text):
     记分板
     """
 
-    def __init__(self, center, *group):
+    def __init__(self, center, font='arial', *group):
         self._score = 0
-        super().__init__(text=f"Score: {self._score}", center=center, font='arial', color=(255, 0, 0), font_size=30,
+        super().__init__(text=f"Score: {self._score}", center=center, font=font, color=(255, 0, 0), font_size=30,
                          group=group)
         self.score = 0
 
@@ -279,8 +288,8 @@ class WinMenu(widget.Text):
     胜利菜单
     """
 
-    def __init__(self, center, score, *group):
-        super().__init__(f"You Win! Score: {score}", center, color=(255, 0, 0), font_size=40, group=group)
+    def __init__(self, center, score, font='arial', *group):
+        super().__init__(f"You Win! Score: {score}", center, color=(255, 0, 0), font_size=40, font=font, group=group)
         self._score = score
 
     @property
@@ -298,8 +307,8 @@ class FPSView(widget.Text):
     用来显示FPS的控件
     """
 
-    def __init__(self, center, *group):
-        super().__init__(text="FPS: 0", center=center, font='arial', color=(0, 0, 255), font_size=30, group=group)
+    def __init__(self, center, font='arial', *group):
+        super().__init__(text="FPS: 0", center=center, font=font, color=(0, 0, 255), font_size=30, group=group)
         self.fps = 0
 
     @property
@@ -327,6 +336,7 @@ def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Su
         # 如果难度不允许飞机攻击，则禁用攻击方法
         if not DIFFICULTY[difficulty]['fire']:
             e.fire = lambda *a: a
+        e.chase = DIFFICULTY[difficulty]['chase']
 
 
 class MainApp:
@@ -341,11 +351,14 @@ class MainApp:
         # 加载游戏资源，这样重新开始游戏时不用再加载了
         self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
         self.enemy_images = [resource.load(f"./data/enemy_{i}.png", True).convert_alpha() for i in range(1, 4)]
+        self.boss_image = resource.load(f"./data/boss.png", True).convert_alpha()
 
         self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
         self.shot_image = resource.load('./data/shot.gif', True).convert_alpha()
 
         self.fire_image = resource.load("data/fire.png", False, pygame.Surface((0, 0))).convert_alpha()
+        self.font = resource.load("./data/Kenney Pixel.ttf", False, pygame.font.SysFont("arial", 30), 45)
+        self.font_large = resource.load("./data/Kenney Pixel.ttf", False, pygame.font.SysFont("arial", 30), 80)
 
         # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
         self.running = False
@@ -388,19 +401,20 @@ class MainApp:
 
         # 初始化游戏对象
         # 记分板
-        score_board = ScoreBoard((70, 50), all_objects)
+        score_board = ScoreBoard((70, 50), self.font, all_objects)
         # 胜利界面
-        win_menu = WinMenu(SCREEN_RECT.center, 0, after_player_win)
+        win_menu = WinMenu(SCREEN_RECT.center, 0, self.font_large, after_player_win)
         # 失败界面
-        widget.Text(text="You Lose!", center=SCREEN_RECT.center, font='arial', color=(255, 0, 0), font_size=50, group=[after_player_dead])
+        widget.Text(text="You Lose!", center=SCREEN_RECT.center, font=self.font_large, color=(255, 0, 0), font_size=50, group=[after_player_dead])
         # 暂停界面
-        widget.Text(text="Paused", center=SCREEN_RECT.center, font='arial', color=(0, 0, 255), font_size=50, group=[paused_objects])
+        widget.Text(text="Paused", center=SCREEN_RECT.center, font=self.font_large, color=(0, 0, 255), font_size=50, group=[paused_objects])
         # 重玩按钮
         widget.Button(center=(SCREEN_RECT.centerx, SCREEN_RECT.centery + 100), text="Replay",
                       group=[after_player_win, after_player_dead],
+                      font=self.font,
                       command=self.replay_game)
         # 用于显示帧率的对象
-        fps_view = FPSView((50, SCREEN_RECT.height - 35), all_objects, paused_objects)
+        fps_view = FPSView((50, SCREEN_RECT.height - 35), self.font, all_objects, paused_objects)
         # 难度，默认为0
         difficulty = 0
         # 玩家
