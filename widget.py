@@ -39,7 +39,7 @@ class Text(pygame.sprite.Sprite):
 
 class Button(Text):
     """
-    按钮组件，在鼠标左键按下时触发命令
+    按钮组件，在鼠标左键按下时触发命令，本身是个文本
     """
 
     def __init__(self, command, text: str, center: tuple[int], font: str = 'arial',
@@ -59,6 +59,28 @@ class Button(Text):
         :param kwargs: 字典，放你想要传给command的参数
         """
         super().__init__(text, center, font, font_size, color, background, group)
+        self.command = command
+        self.args = args
+        self.kwargs = kwargs
+
+    def push(self):
+        self.command(*self.args, self.kwargs)
+
+    def update(self, dt=None):
+        if pygame.mouse.get_pressed(3)[0]:
+            if self.rect.collidepoint(pygame.mouse.get_pos()):
+                self.push()
+
+
+class ImageButton(pygame.sprite.Sprite):
+    """
+    图片按钮组件，在鼠标左键按下时触发命令
+    """
+    def __init__(self, center, image: pygame.Surface, command, group=None, *args, **kwargs):
+        super().__init__(*group)
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.rect.center = center
         self.command = command
         self.args = args
         self.kwargs = kwargs
