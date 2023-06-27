@@ -42,7 +42,7 @@ class Button(Text):
     按钮组件，在鼠标左键按下时触发命令，本身是个文本
     """
 
-    def __init__(self, command, text: str, center: tuple[int], font: str = 'arial',
+    def __init__(self, command, text: str, center, font: str = 'arial',
                  font_size: int = 20, color: tuple[int] = (255, 0, 0),
                  background: tuple[int] = None, group=None, *args, **kwargs):
         """
