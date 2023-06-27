@@ -25,3 +25,7 @@ QUIT_KEY = pygame.K_ESCAPE
 # 开火按键
 # 游戏中按下该按键玩家发射子弹
 FIRE_KEY = pygame.K_SPACE
+
+# 全屏按键
+# 游戏中按下该按键切换全屏
+FULL_KEY = pygame.K_f

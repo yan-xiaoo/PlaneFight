@@ -82,6 +82,9 @@ class Player(CommonSprite):
         # 飞机的尾焰，在飞机向上飞行时才会出现
         # 注意：更改尾焰图片后要再次校准！
         self.fire_sprite = CommonSprite([fire], (self.rect.centerx, self.rect.centery + 35))
+        # 开火cd，单位：秒
+        self.total_fire_cd = 0.25
+        self.fire_cd = 0
 
     # noinspection PyTypeChecker
     def move(self, vertical_direction=0, horizontal_direction=0,
@@ -113,6 +116,22 @@ class Player(CommonSprite):
         self.fire_sprite.kill()
         # 必须先干掉尾焰，再干掉自己
         super().kill()
+
+    def fire(self, images, *group) -> None:
+        """
+        我方开火
+        :param images: 子弹图片
+        :param group: 子弹所要添加到的组，可以有任意多个
+        :return: 无
+        """
+        if self.fire_cd <= 0:
+            self.fire_cd = self.total_fire_cd
+            # 生成子弹
+            PlayerBullet(images, self.rect.midtop, *group)
+
+    def update(self, dt, *args):
+        super().update(dt, *args)
+        self.fire_cd -= dt
 
 
 class Enemy(CommonSprite):
@@ -468,6 +487,18 @@ class MainApp:
         self.font = resource.load("./data/Kenney Pixel.ttf", False, pygame.font.SysFont("arial", 30), 45)
         self.font_large = resource.load("./data/Kenney Pixel.ttf", False, pygame.font.SysFont("arial", 45), 80)
 
+        # 加载音乐
+        self.shot_sound = resource.load("./data/car_door.wav", False, None)
+        if self.shot_sound is not None:
+            self.shot_sound.set_volume(0.1)
+
+        # 加载背景音乐，并尝试播放
+        resource.load_bgm("./data/mus_anothermedium.ogg", False)
+        try:
+            pygame.mixer.music.play(-1)
+        except pygame.error:
+            pass
+
         # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
         self.running = False
 
@@ -491,6 +522,8 @@ class MainApp:
         playing = True
         # 初始没有胜利
         win = False
+        # 初始不全屏
+        fullscreen = False
         # 存放在游戏正常运行时所有需要更新的对象
         all_objects = pygame.sprite.RenderUpdates()
         # 存放需要在玩家死后更新的对象，一般是爆炸特效和失败界面，平时不会更新这些内容
@@ -505,10 +538,6 @@ class MainApp:
         show_fps = False
         # 每帧间隔，初始设为0
         diff = 0
-        # 开火的总内置cd
-        total_fire_cd = 0.25
-        # 开火的剩余cd
-        fire_cd = 0
 
         # 初始化游戏对象
         # 记分板
@@ -564,13 +593,24 @@ class MainApp:
                     show_fps = not show_fps
                 if key_event.key == QUIT_KEY:
                     self.running = False
-
-            # 鼠标控制开火
-            # 只要鼠标左键按下并且cd为0，就可以开火
-            # 这样只要一直按住鼠标左键就能一直用最大速度开火
-            if pygame.mouse.get_pressed(3)[0] and fire_cd <= 0:
-                fire_cd = total_fire_cd
-                PlayerBullet([self.shot_image], player.rect.midtop, player_bullet_group, all_objects)
+                if key_event.key == FULL_KEY:
+                    # 进行强制暂停，防止玩家在切换屏幕的时候寄掉
+                    if playing:
+                        paused = True
+                    if not fullscreen:
+                        screen_backup = self.screen.copy()
+                        self.screen = pygame.display.set_mode(SCREEN_RECT.size, pygame.FULLSCREEN,
+                                                              pygame.display.mode_ok(SCREEN_RECT.size, pygame.FULLSCREEN, 32)
+                                                              )
+                        self.screen.blit(screen_backup, (0, 0))
+                    else:
+                        screen_backup = self.screen.copy()
+                        self.screen = pygame.display.set_mode(SCREEN_RECT.size, 0,
+                                                              pygame.display.mode_ok(SCREEN_RECT.size, 0, 32))
+                        self.screen.blit(screen_backup, (0, 0))
+                    fullscreen = not fullscreen
+                    # 切换屏幕后绘制一帧，不然除了那个暂停界面之外其他屏幕都是黑的
+                    dirty_rects.extend(all_objects.draw(self.screen))
 
             # 暂停时相当于除了处理时间外，其他所有内容停止运行
             # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
@@ -622,11 +662,13 @@ class MainApp:
                     one_enemy.fire([pygame.transform.flip(self.shot_image, 1, 1)], all_objects, enemy_bullet_group)
 
                 # 玩家开火
-                fire_cd -= diff / 1000
-                if keys_pressed[FIRE_KEY]:
-                    if fire_cd <= 0:
-                        fire_cd = total_fire_cd
-                        PlayerBullet([self.shot_image], player.rect.midtop, all_objects, player_bullet_group)
+                # 鼠标控制开火:
+                # 只要鼠标左键按下并且cd为0，就可以开火
+                # 这样只要一直按住鼠标左键就能一直用最大速度开火
+                if keys_pressed[FIRE_KEY] or pygame.mouse.get_pressed(3)[0]:
+                    player.fire([self.shot_image], player_bullet_group, all_objects)
+                    if self.shot_sound is not None:
+                        self.shot_sound.play()
 
                 # 玩家子弹与敌机的碰撞检测
                 for one_enemy in pygame.sprite.groupcollide(enemy, player_bullet_group, False, True).keys():
@@ -650,7 +692,7 @@ class MainApp:
                                   all_objects, explosion_group)
                         one_enemy.kill()
 
-                #  判断爆炸特效能引发连锁爆炸的时间是否结束，结束的话就把爆炸特效从可碰撞物体里移除 TODO
+                #  判断爆炸特效能引发连锁爆炸的时间是否结束，结束的话就把爆炸特效从可碰撞物体列表里移除
                 for explosion_sprite in explosion_group.sprites():
                     if explosion_sprite.chain_time <= 0:
                         explosion_group.remove(explosion_sprite)
