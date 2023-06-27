@@ -11,9 +11,10 @@ SCREEN_RECT = pygame.rect.Rect(0, 0, 640, 480)
 
 # 规定普通飞机不同难度下的数据
 # speed: 该难度下飞机速度的上下限（像素/秒）
-DIFFICULTY = {0: {'speed': (150, 200)},
-              1: {'speed': (175, 250)},
-              2: {'speed': (200, 300)}
+DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3)},
+              1: {'speed': (175, 250), "batch": (2, 4)},
+              2: {'speed': (200, 300), "batch": (2, 6)},
+              3: {'speed': (250, 350), "batch": (3, 6)},
               }
 
 
@@ -170,17 +171,15 @@ class ScoreBoard(CommonSprite):
         self.image = self.font.render(f"Score: {self.score}", True, (255, 0, 0))
 
 
-def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Surface], amount: int,
-                       difficulty: int = 0) -> None:
+def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Surface], difficulty: int = 0) -> None:
     """
     以difficulty为难度等级召唤出amount个普通飞机敌人（不是boss）加入groups中
     :param images: 这些敌人所使用的一些图片（可以只有一张，多张的情况下会轮播）
     :param groups: 这些召唤出的敌人需要被加入的组
-    :param amount: 需要召唤的敌人的数量
-    :param difficulty: 这些召唤的敌人的难度，详情见difficulty字典边上的注释。难度影响飞机速度的上下限
+    :param difficulty: 这些召唤的敌人的难度，详情见difficulty字典边上的注释。难度影响飞机速度的上下限,一批飞机多少等
     :return: 无
     """
-    for _ in range(amount):
+    for _ in range(random.randint(*DIFFICULTY[difficulty]['batch'])):
         e = Enemy(images, *groups)
         e.speed = random.randint(*DIFFICULTY[difficulty]['speed'])
 
@@ -241,6 +240,8 @@ def main():
     fire_cd = 0
     # 记分板
     score_board = ScoreBoard((70, 50), all_objects)
+    # 难度，默认为0
+    difficulty = 0
     while running:
         dirty_rects = []
         # 这部分专门处理事件
@@ -281,8 +282,8 @@ def main():
             for one_enemy in pygame.sprite.spritecollide(player, enemy, True):
                 Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, after_player_dead, explosion_group)
                 Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], player.rect.center, after_player_dead, explosion_group)
-                player.kill()
-                living = False
+                #  player.kill()
+                #  living = False
 
             # 玩家开火
             fire_cd -= diff / 1000
@@ -295,16 +296,24 @@ def main():
             for sprite in enemy.sprites():
                 sprite.rect = sprite.large_rect
             for one_enemy in pygame.sprite.groupcollide(enemy, bullet_group, True, True).keys():
-                score_board.score += 1
+                score_board.score += 10
                 Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, all_objects, explosion_group)
 
             for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, True, False).keys():
-                score_board.score += 1
+                score_board.score += 10
                 Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center, all_objects, explosion_group)
+
+            # 检测成绩调整难度
+            if 200 > score_board.score >= 100:
+                difficulty = 1
+            elif 300 > score_board.score >= 200:
+                difficulty = 2
+            elif score_board.score >= 300:
+                difficulty = 3
 
             # 如果敌人全都寄了，就再召唤一批
             if len(enemy) == 0:
-                spawn_simple_enemy([enemy, all_objects], [enemy_image], random.randint(1, 5), 0)
+                spawn_simple_enemy([enemy, all_objects], [enemy_image], difficulty)
 
             # 这里是绘制所有物体
             all_objects.clear(screen, background)
