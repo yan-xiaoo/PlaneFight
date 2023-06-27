@@ -314,13 +314,16 @@ class HardEnemyBullet(EnemyBullet):
     简直是战神级别，把作者打死了好多次（
     """
 
-    def __init__(self, images, center, chase_time: float = 0.75, *group):
+    def __init__(self, images, center, chase_time: float = None, *group):
         super().__init__(images, center, *group)
         # 子弹仅在一段时间内可以追踪我方
         # 要是一直能追踪我方就真成超级战神了
+        if chase_time is None:
+            chase_time = 0.75
         self.chase_time = chase_time
         # 这个用来存储追踪的最后一帧的方向，子弹失去追踪特性之后会一直沿这个方向飞行
         self.dx = self.dy = None
+        self.speed = 225
 
     def update(self, dt: float, player_position: tuple[float, float] = None, *args) -> None:
         # 如果没有传入我方飞机的位置，就不追踪了，直接按普通子弹的方法飞行
@@ -434,6 +437,34 @@ class FPSView(widget.Text):
         self.text = f"FPS: {self._fps}"
 
 
+class Background(pygame.sprite.Sprite):
+    """
+    背景类，用来实现背景滚动
+    """
+
+    def __init__(self, image: pygame.Surface, speed, *groups: pygame.sprite.Group):
+        """
+        创建一个背景
+        :param image: 背景图片
+        :param speed: 背景滚动的速度，单位为像素/秒
+        :param groups: 背景所在的组
+        """
+        super().__init__(*groups)
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.speed = speed
+
+    def update(self, dt: float, *args) -> None:
+        """
+        更新背景位置
+        :param dt: 每两次调用的间隔
+        :return: 无
+        """
+        self.rect.top += self.speed * dt
+        if self.rect.top >= SCREEN_RECT.bottom:
+            self.rect.top = 0
+
+
 def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Surface], difficulty: int = 0) -> None:
     """
     以difficulty为难度等级召唤出amount个普通飞机敌人（不是boss）加入groups中
@@ -454,6 +485,8 @@ def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Su
         if not DIFFICULTY[difficulty]['fire']:
             e.fire = lambda *a: a
         e.chase = DIFFICULTY[difficulty]['chase']
+        if e.chase:
+            e.total_fire_cd = e.fire_cd = 1.5
 
 
 class MainApp:
@@ -524,6 +557,8 @@ class MainApp:
         win = False
         # 初始不全屏
         fullscreen = False
+        # 调试模式
+        debug = False
         # 存放在游戏正常运行时所有需要更新的对象
         all_objects = pygame.sprite.RenderUpdates()
         # 存放需要在玩家死后更新的对象，一般是爆炸特效和失败界面，平时不会更新这些内容
@@ -574,6 +609,7 @@ class MainApp:
         # 敌方子弹组
         enemy_bullet_group = pygame.sprite.Group()
         # 我方与敌方子弹组分开是为了方便碰撞检测
+        multi_keys = []
 
         # 游戏正式开始
         while self.running:
@@ -584,9 +620,11 @@ class MainApp:
             if events:
                 # 在一轮循环结束后退出游戏
                 self.running = False
+            multi_keys = [] if pygame.K_b and pygame.K_u and pygame.K_g in multi_keys else multi_keys
             for key_event in pygame.event.get(pygame.KEYDOWN):
                 # 如果按下的按键为配置文件中的暂停键，那么切换暂停状态
                 # 只有游戏没有结束（没有输赢）的时候才能暂停
+                multi_keys.append(key_event.key)
                 if key_event.key == PAUSE_KEY and playing:
                     paused = not paused
                 if key_event.key == FPS_KEY:
@@ -612,6 +650,9 @@ class MainApp:
                     # 切换屏幕后绘制一帧，不然除了那个暂停界面之外其他屏幕都是黑的
                     dirty_rects.extend(all_objects.draw(self.screen))
 
+            if pygame.K_b in multi_keys and pygame.K_u in multi_keys and pygame.K_g in multi_keys:
+                print("debug")
+                debug = not debug
             # 暂停时相当于除了处理时间外，其他所有内容停止运行
             # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
             # 下面是游戏循环主要内容：
@@ -643,18 +684,21 @@ class MainApp:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
                               player.rect.center,
                               after_player_dead, explosion_group)
-                    # 玩家死亡
-                    player.kill()
-                    playing = False
+                    # 玩家死亡, 调试模式下无敌
+                    if not debug:
+                        player.kill()
+                        playing = False
 
                 # 如果敌方子弹撞到玩家，游戏结束
-                for _ in pygame.sprite.spritecollide(player, enemy_bullet_group, True):
+                for one_enemy in pygame.sprite.spritecollide(player, enemy_bullet_group, True):
                     # 在玩家的中心位置生成爆炸特效
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
                               (player.rect.centerx + 15, player.rect.centery),
                               after_player_dead, explosion_group, all_objects)
-                    player.kill()
-                    playing = False
+                    one_enemy.kill()
+                    if not debug:
+                        player.kill()
+                        playing = False
 
                 # 下面这两部分为：敌机尝试开火，玩家尝试使用键盘开火
                 # 敌机开火
@@ -682,7 +726,7 @@ class MainApp:
                         one_enemy.kill()
 
                 # 敌机与爆炸特效的碰撞检测
-                for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, False, False).keys():
+                for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, False, True).keys():
                     # 检查敌机是否无敌
                     if one_enemy.full_time <= 0:
                         # 加分，在敌机中心生成爆炸效果

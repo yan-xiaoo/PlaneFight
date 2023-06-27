@@ -95,8 +95,8 @@ class Button(Text):
 
     def update(self, dt=None):
         # 每帧都检查鼠标是否按下，如果鼠标左键被按下且鼠标指针在按钮上，就触发回调
-        if pygame.mouse.get_pressed(3)[0]:
-            if self.rect.collidepoint(pygame.mouse.get_pos()):
+        for event in pygame.event.get(pygame.MOUSEBUTTONUP):
+            if event.button == pygame.BUTTON_LEFT and self.rect.collidepoint(event.pos):
                 self.push()
 
 
@@ -126,6 +126,6 @@ class ImageButton(pygame.sprite.Sprite):
         self.command(*self.args, self.kwargs)
 
     def update(self, dt=None):
-        if pygame.mouse.get_pressed(3)[0]:
-            if self.rect.collidepoint(pygame.mouse.get_pos()):
+        for event in pygame.event.get(pygame.MOUSEBUTTONUP):
+            if event.button == pygame.BUTTON_LEFT and self.rect.collidepoint(event.pos):
                 self.push()
