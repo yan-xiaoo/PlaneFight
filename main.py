@@ -1,3 +1,4 @@
+import math
 import pygame
 import random
 import resource
@@ -11,10 +12,10 @@ SCREEN_RECT = pygame.rect.Rect(0, 0, 640, 480)
 
 # 规定普通飞机不同难度下的数据
 # speed: 该难度下飞机速度的上下限（像素/秒）
-DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3), "full_time": 0.5},
-              1: {'speed': (175, 250), "batch": (2, 4), "full_time": 0.4},
-              2: {'speed': (200, 300), "batch": (2, 6), "full_time": 0.3},
-              3: {'speed': (250, 350), "batch": (3, 6), "full_time": 0.25},
+DIFFICULTY = {0: {'speed': (150, 200), "batch": (1, 3), "full_time": 0.5, "fire": True},
+              1: {'speed': (175, 225), "batch": (2, 4), "full_time": 0.4, "fire": False},
+              2: {'speed': (200, 250), "batch": (2, 6), "full_time": 0.3, "fire": True},
+              3: {'speed': (225, 275), "batch": (3, 6), "full_time": 0.25, "fire": True},
               }
 
 
@@ -45,7 +46,7 @@ class CommonSprite(pygame.sprite.Sprite):
             self.total_change_time = change_time
         self.change_time = self.total_change_time
 
-    def update(self, dt) -> None:
+    def update(self, dt, *args) -> None:
         """
         该方法应当被每帧调用以更新图片
         :param dt: 距离上次调用的间隔（秒）
@@ -68,8 +69,9 @@ class Player(CommonSprite):
     def __init__(self, images, center, fire=None, *group):
         super().__init__(images, center, None, *group)
         # 减小玩家的碰撞箱，降低撞到敌机的可能
-        self.rect.width = 45
+        self.rect.width = 60
         self.rect.height = 40
+        self.rect.centerx += 15
         # 速度：300像素每秒
         self.speed = 300
         self.fire_sprite = CommonSprite([fire], (self.rect.centerx, self.rect.centery + 35))
@@ -90,10 +92,14 @@ class Player(CommonSprite):
         self.rect = self.rect.clamp(SCREEN_RECT)
         if horizontal_direction == -1:
             self.groups()[0].add(self.fire_sprite)
-            self.fire_sprite.rect.centerx = self.rect.centerx + 35
+            self.fire_sprite.rect.centerx = self.rect.centerx + 30
             self.fire_sprite.rect.centery = self.rect.centery + 75
         else:
             self.groups()[0].remove(self.fire_sprite)
+
+    def kill(self):
+        self.fire_sprite.kill()
+        super().kill()
 
 
 class Enemy(CommonSprite):
@@ -113,15 +119,20 @@ class Enemy(CommonSprite):
         self.speed = random.randint(100, 200)
         # 为防止敌机出来就死，给点无敌时间
         self.full_time = 0.5
+        # 敌机如果能发射子弹的话，其子弹的冷却时间
+        self.fire_cd = self.total_fire_cd = 1
+        # 敌机发射过的子弹
+        self.bullets = []
 
-    def update(self, dt) -> None:
+    def update(self, dt, *args) -> None:
         """
         更新敌人的状态，这个敌人只会从上向下飞，不会蛇皮走位
         :param dt: 两次调用该函数的间隔（用来计算应当移动的距离）
         :return:无
         """
-        super().update(dt)
+        super().update(dt, *args)
         self.full_time -= dt
+        self.fire_cd -= dt
         self.rect.move_ip(0, self.speed * dt)
         # 如果敌机向下飞出屏幕，就把它删掉
         if self.rect.top >= SCREEN_RECT.bottom:
@@ -133,6 +144,16 @@ class Enemy(CommonSprite):
             self.rect.left = 0
         if self.rect.right > SCREEN_RECT.right:
             self.rect.right = SCREEN_RECT.right
+
+    def fire(self, images, *group):
+        if self.fire_cd <= 0:
+            self.fire_cd = self.total_fire_cd
+            self.bullets.append(HardEnemyBullet(images, self.rect.center, 0.75, *group))
+
+    def kill(self):
+        for one_bullet in self.bullets:
+            one_bullet.kill()
+        super().kill()
 
 
 class Explosion(CommonSprite):
@@ -154,13 +175,13 @@ class Explosion(CommonSprite):
         # 所以加了一个时间限制，爆炸特效仅会在这段时间内引发连锁爆炸
         self.chain_time = 0.05
 
-    def update(self, dt):
+    def update(self, dt, *args):
         """
         更新爆炸特效的状态，从出现到消失
         :param dt: 每两次调用间隔
         :return: 无
         """
-        super().update(dt)
+        super().update(dt, *args)
         self.life_time -= dt
         self.chain_time -= dt
         if self.life_time <= 0:
@@ -174,16 +195,62 @@ class PlayerBullet(CommonSprite):
 
     def __init__(self, images, center, *group):
         center = list(center)
-        center[0] = center[0] + 35
+        center[0] = center[0] + 25
         super().__init__(images, center, None, *group)
         # 速度：500像素/秒 方向：上
         self.speed = -500
 
-    def update(self, dt) -> None:
-        super().update(dt)
+    def update(self, dt, *args) -> None:
+        super().update(dt, *args)
         self.rect.move_ip(0, self.speed * dt)
         if self.rect.bottom < SCREEN_RECT.top:
             self.kill()
+
+
+class EnemyBullet(CommonSprite):
+    def __init__(self, images, center, *group):
+        center = list(center)
+        center[0] = center[0] + 15
+        center[1] = center[1] + 50
+        super().__init__(images, center, None, *group)
+        self.speed = 300
+
+    def update(self, dt, *args) -> None:
+        super().update(dt, *args)
+        self.rect.move_ip(0, self.speed * dt)
+        if self.rect.top >= SCREEN_RECT.bottom:
+            self.kill()
+
+
+class HardEnemyBullet(EnemyBullet):
+    def __init__(self, images, center, chase_time: float = 0.75, *group):
+        super().__init__(images, center, *group)
+        self.chase_time = chase_time
+        self.dx = self.dy = None
+
+    def update(self, dt, player_position, *args) -> None:
+        self.chase_time -= dt
+        dis = math.sqrt((self.rect.centerx - player_position[0]) ** 2 +
+                        (self.rect.centery - player_position[1]) ** 2)
+        dx = self.speed * dt * (self.rect.centerx - player_position[0]) / dis
+        dy = self.speed * dt * (self.rect.centery - player_position[1]) / dis
+        if self.chase_time >= 0 and self.dx is None and self.dy is None:
+            self.rect.move_ip(-dx, -dy)
+            if self.rect.top >= SCREEN_RECT.bottom:
+                self.kill()
+        elif self.dx is None and self.dy is None:
+            self.dx = -dx
+            self.dy = -dy
+        else:
+            self.rect.move_ip(self.dx, self.dy)
+
+    def weak_chase(self, dt, player_position):
+        if abs(self.rect.centery - player_position[1]) > abs(self.rect.centerx - player_position[0]):
+            modifier = -1 if self.rect.centery > player_position[1] else 1
+            self.rect.move_ip(0, self.speed * dt * modifier)
+        else:
+            modifier = -1 if self.rect.centerx > player_position[0] else 1
+            self.rect.move_ip(self.speed * dt * modifier, 0)
 
 
 class ScoreBoard(widget.Text):
@@ -257,6 +324,9 @@ def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Su
         e = Enemy([random.choice(images)], *groups)
         e.speed = random.randint(*DIFFICULTY[difficulty]['speed'])
         e.full_time = DIFFICULTY[difficulty]['full_time']
+        # 如果难度不允许飞机攻击，则禁用攻击方法
+        if not DIFFICULTY[difficulty]['fire']:
+            e.fire = lambda *a: a
 
 
 class MainApp:
@@ -341,6 +411,8 @@ class MainApp:
         explosion_group = pygame.sprite.Group()
         # 子弹
         player_bullet_group = pygame.sprite.Group()
+        # 敌方子弹组
+        enemy_bullet_group = pygame.sprite.Group()
 
         while self.running:
             dirty_rects = []
@@ -375,7 +447,7 @@ class MainApp:
                             keys_pressed[pygame.K_s] - keys_pressed[pygame.K_w]
                             + keys_pressed[pygame.K_DOWN] - keys_pressed[pygame.K_UP],
                             diff / 1000)
-                all_objects.update(diff / 1000)
+                all_objects.update(diff / 1000, player.rect.center)
 
                 # 如果玩家撞到敌机
                 # 游戏结束
@@ -388,9 +460,19 @@ class MainApp:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
                               player.rect.center,
                               after_player_dead, explosion_group)
-                    player.fire_sprite.kill()
                     player.kill()
                     playing = False
+
+                # 如果敌方子弹撞到玩家，游戏结束
+                for _ in pygame.sprite.spritecollide(player, enemy_bullet_group, True):
+                    Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                              (player.rect.centerx + 15, player.rect.centery),
+                              after_player_dead, explosion_group, all_objects)
+                    player.kill()
+                    playing = False
+
+                for one_enemy in enemy.sprites():
+                    one_enemy.fire([pygame.transform.flip(self.shot_image, 1, 1)], all_objects, enemy_bullet_group)
 
                 # 玩家开火
                 fire_cd -= diff / 1000
@@ -470,7 +552,7 @@ class MainApp:
                 # 只计算上一帧到这一帧的时间间隔，不等待
                 diff = clock.tick()
 
-    def replay_game(self, *args):
+    def replay_game(self, *_):
         self.running = False
         self.start()
 
