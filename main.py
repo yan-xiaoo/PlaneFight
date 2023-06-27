@@ -1,6 +1,7 @@
 import pygame
 import random
 import resource
+import widget
 from configure import *
 
 if not pygame.get_init():
@@ -177,40 +178,63 @@ class PlayerBullet(CommonSprite):
             self.kill()
 
 
-class ScoreBoard(CommonSprite):
+class ScoreBoard(widget.Text):
     """
     记分板
     """
 
     def __init__(self, center, *group):
+        self._score = 0
+        super().__init__(text=f"Score: {self._score}", center=center, font='arial', color=(255, 0, 0), font_size=30,
+                         group=group)
         self.score = 0
-        self.font = pygame.sysfont.SysFont("arial", 30)
-        self.text = self.font.render("Score: 0", True, (255, 0, 0))
-        super().__init__([self.text], center, None, *group)
-        self.rect = self.text.get_rect()
-        self.rect.center = center
 
-    def update(self, dt) -> None:
-        super().update(dt)
-        self.image = self.font.render(f"Score: {self.score}", True, (255, 0, 0))
+    @property
+    def score(self):
+        return self._score
+
+    @score.setter
+    def score(self, new_score):
+        self._score = new_score
+        self.text = f"Score: {self._score}"
 
 
-class WinMenu(CommonSprite):
+class WinMenu(widget.Text):
     """
     胜利菜单
     """
 
     def __init__(self, center, score, *group):
-        self.font = pygame.sysfont.SysFont("arial", 30)
-        self.text = self.font.render(f"You Win! Score: {score}", True, (255, 0, 0))
-        super().__init__([self.text], center, None, *group)
-        self.rect = self.text.get_rect()
-        self.rect.center = center
-        self.score = score
+        super().__init__(f"You Win! Score: {score}", center, color=(255, 0, 0), font_size=40, group=group)
+        self._score = score
 
-    def update(self, dt=None):
-        super().update(dt)
-        self.image = self.font.render(f"You Win! Score: {self.score}", True, (255, 0, 0))
+    @property
+    def score(self):
+        return self._score
+
+    @score.setter
+    def score(self, new_score):
+        self._score = new_score
+        self.text = f"You Win! Score: {self._score}"
+
+
+class FPSView(widget.Text):
+    """
+    用来显示FPS的控件
+    """
+
+    def __init__(self, center, *group):
+        super().__init__(text="FPS: 0", center=center, font='arial', color=(255, 0, 0), font_size=30, group=group)
+        self.fps = 0
+
+    @property
+    def fps(self):
+        return self._fps
+
+    @fps.setter
+    def fps(self, new_fps):
+        self._fps = new_fps
+        self.text = f"FPS: {self._fps}"
 
 
 def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Surface], difficulty: int = 0) -> None:
@@ -227,194 +251,197 @@ def spawn_simple_enemy(groups: list[pygame.sprite.Group], images: list[pygame.Su
         e.full_time = DIFFICULTY[difficulty]['full_time']
 
 
-def main():
-    # 初始化游戏基本内容
-    screen = pygame.display.set_mode(SCREEN_RECT.size, 0,
-                                     pygame.display.mode_ok(SCREEN_RECT.size, 0, 32))
-    pygame.display.set_caption("飞机大战")
-    # 这张图是示例里的aliens.py用的，感觉很适合主题就拿来了
-    background_image = resource.load("./data/background.gif", True)
-    background = pygame.surface.Surface(SCREEN_RECT.size)
-    # 由于这张图片特别窄（左右距离小），但左右侧衔接很自然，所以不断从左向右绘制该图片，直至它填满屏幕
-    for tile in range(0, SCREEN_RECT.width, background_image.get_width()):
-        background.blit(background_image, (tile, 0))
-    screen.blit(background, (0, 0))
-    pygame.display.flip()
+class MainApp:
+    def __init__(self):
+        self.screen = pygame.display.set_mode(SCREEN_RECT.size, 0,
+                                              pygame.display.mode_ok(SCREEN_RECT.size, 0, 32))
+        pygame.display.set_caption("飞机大战")
+        # 这张图是示例里的aliens.py用的，感觉很适合主题就拿来了
+        self.background_image = resource.load("./data/background.gif", True)
+        self.background = pygame.surface.Surface(SCREEN_RECT.size)
+        # 由于这张图片特别窄（左右距离小），但左右侧衔接很自然，所以不断从左向右绘制该图片，直至它填满屏幕
+        for tile in range(0, SCREEN_RECT.width, self.background_image.get_width()):
+            self.background.blit(self.background_image, (tile, 0))
+        self.screen.blit(self.background, (0, 0))
+        pygame.display.flip()
 
-    font = pygame.font.SysFont("arial", 30)
+        # 加载游戏资源，这样重新开始游戏时不用再加载了
+        self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
+        self.enemy_image = resource.load("./data/enemy_1.png", True).convert_alpha()
+        self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
+        self.shot_image = resource.load('./data/shot.gif', True).convert_alpha()
 
-    # 初始化游戏对象
-    all_objects = pygame.sprite.RenderUpdates()
+    def start(self):
+        # 初始化游戏控制内容
+        # 初始处于运行状态
+        running = True
+        # 初始没有暂停
+        paused = False
+        # 初始游戏没有结束
+        playing = True
+        # 初始没有胜利
+        win = False
+        # 存放所有需要更新的对象
+        all_objects = pygame.sprite.RenderUpdates()
+        # 存放需要在玩家死后更新的对象，一般是爆炸特效，平时不会更新这些内容
+        after_player_dead = pygame.sprite.RenderUpdates()
+        # 存放玩家胜利后还需要更新的对象
+        after_player_win = pygame.sprite.RenderUpdates()
+        # 用于控制帧率
+        clock = pygame.time.Clock()
+        # 初始不展示帧率
+        show_fps = False
+        # 每帧间隔，初始设为0
+        diff = 0
+        # 开火的总内置cd
+        total_fire_cd = 0.25
+        # 开火的剩余cd
+        fire_cd = 0
+        # 记分板
 
-    plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
-    player = Player([plane_image], SCREEN_RECT.center, all_objects)
+        # 初始化游戏对象
+        score_board = ScoreBoard((70, 50), all_objects)
+        # 胜利界面
+        win_menu = WinMenu(SCREEN_RECT.center, 0, after_player_win)
+        # 用于显示帧率的对象
+        fps_view = FPSView((SCREEN_RECT.width - 100, 50), all_objects)
+        # 难度，默认为0
+        difficulty = 0
+        # 玩家
+        player = Player([self.plane_image], SCREEN_RECT.center, all_objects)
+        # 敌人
+        enemy = pygame.sprite.Group()
+        # 爆炸特效
+        explosion_group = pygame.sprite.Group()
+        # 子弹
+        player_bullet_group = pygame.sprite.Group()
 
-    enemy_image = resource.load("./data/enemy_1.png", True).convert_alpha()
-    enemy = pygame.sprite.Group()
-
-    explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
-    explosion_group = pygame.sprite.Group()
-
-    shot_image = resource.load('./data/shot.gif', True).convert_alpha()
-    bullet_group = pygame.sprite.Group()
-
-    # 用于显示帧率的对象
-    fps_sprite = pygame.sprite.Sprite(all_objects)
-    fps_sprite.image = pygame.Surface((0, 0))
-    fps_sprite.rect = fps_sprite.image.get_rect()
-
-    # 初始处于运行状态
-    running = True
-    # 初始没有暂停
-    paused = False
-    # 初始游戏没有结束
-    playing = True
-    # 初始没有胜利
-    win = False
-    # 存放需要在玩家死后更新的对象，一般是爆炸特效，平时不会更新这些内容
-    after_player_dead = pygame.sprite.RenderUpdates()
-    # 存放玩家胜利后还需要更新的对象
-    after_player_win = pygame.sprite.RenderUpdates()
-    # 用于控制帧率
-    clock = pygame.time.Clock()
-    # 初始不展示帧率
-    show_fps = False
-    # 每帧间隔，初始设为0
-    diff = 0
-    # 开火的总内置cd
-    total_fire_cd = 0.25
-    # 开火的剩余cd
-    fire_cd = 0
-    # 记分板
-    score_board = ScoreBoard((70, 50), all_objects)
-    # 胜利界面
-    win_menu = WinMenu(SCREEN_RECT.center, 0, after_player_win)
-    # 难度，默认为0
-    difficulty = 0
-    while running:
-        dirty_rects = []
-        # 这部分专门处理事件
-        events = pygame.event.get(pygame.QUIT)
-        if events:
-            # 在一轮循环结束后退出游戏
-            running = False
-        for key_event in pygame.event.get(pygame.KEYDOWN):
-            # 如果按下的按键为配置文件中的暂停键，那么切换暂停状态
-            if key_event.key == PAUSE_KEY:
-                paused = not paused
-            if key_event.key == FPS_KEY:
-                show_fps = not show_fps
-            if key_event.key == QUIT_KEY:
+        while running:
+            dirty_rects = []
+            # 这部分专门处理事件
+            events = pygame.event.get(pygame.QUIT)
+            if events:
+                # 在一轮循环结束后退出游戏
                 running = False
-        if pygame.mouse.get_pressed(3)[0] and fire_cd <= 0:
-            fire_cd = total_fire_cd
-            PlayerBullet([shot_image], player.rect.midtop, bullet_group, all_objects)
+            for key_event in pygame.event.get(pygame.KEYDOWN):
+                # 如果按下的按键为配置文件中的暂停键，那么切换暂停状态
+                if key_event.key == PAUSE_KEY:
+                    paused = not paused
+                if key_event.key == FPS_KEY:
+                    show_fps = not show_fps
+                if key_event.key == QUIT_KEY:
+                    running = False
+            if pygame.mouse.get_pressed(3)[0] and fire_cd <= 0:
+                fire_cd = total_fire_cd
+                PlayerBullet([self.shot_image], player.rect.midtop, player_bullet_group, all_objects)
 
-        # 暂停时相当于除了处理时间外，其他所有内容停止运行
-        # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
-        # 下面是游戏循环主要内容：
-        if not paused and playing:
-            keys_pressed = pygame.key.get_pressed()
-            # 玩家移动, 注意diff单位为毫秒
-            player.move(keys_pressed[pygame.K_d] - keys_pressed[pygame.K_a]
-                        + keys_pressed[pygame.K_RIGHT] - keys_pressed[pygame.K_LEFT],
-                        keys_pressed[pygame.K_s] - keys_pressed[pygame.K_w]
-                        + keys_pressed[pygame.K_DOWN] - keys_pressed[pygame.K_UP],
-                        diff / 1000)
-            all_objects.update(diff / 1000)
+            # 暂停时相当于除了处理时间外，其他所有内容停止运行
+            # 这里检查目前是否在暂停，如果不在暂停才令游戏运行
+            # 下面是游戏循环主要内容：
+            if not paused and playing:
+                keys_pressed = pygame.key.get_pressed()
+                # 玩家移动, 注意diff单位为毫秒
+                player.move(keys_pressed[pygame.K_d] - keys_pressed[pygame.K_a]
+                            + keys_pressed[pygame.K_RIGHT] - keys_pressed[pygame.K_LEFT],
+                            keys_pressed[pygame.K_s] - keys_pressed[pygame.K_w]
+                            + keys_pressed[pygame.K_DOWN] - keys_pressed[pygame.K_UP],
+                            diff / 1000)
+                all_objects.update(diff / 1000)
 
-            # 如果玩家撞到敌机
-            # 游戏结束
-            for sprite in enemy.sprites():
-                sprite.rect = sprite.large_rect
-            for one_enemy in pygame.sprite.spritecollide(player, enemy, True):
-                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
-                          after_player_dead, explosion_group)
-                Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], player.rect.center,
-                          after_player_dead, explosion_group)
-                player.kill()
-                playing = False
+                # 如果玩家撞到敌机
+                # 游戏结束
+                for sprite in enemy.sprites():
+                    sprite.rect = sprite.large_rect
+                for one_enemy in pygame.sprite.spritecollide(player, enemy, True):
+                    Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                              one_enemy.rect.center,
+                              after_player_dead, explosion_group)
+                    Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                              player.rect.center,
+                              after_player_dead, explosion_group)
+                    player.kill()
+                    playing = False
 
-            # 玩家开火
-            fire_cd -= diff / 1000
-            if keys_pressed[FIRE_KEY]:
-                if fire_cd <= 0:
-                    fire_cd = total_fire_cd
-                    PlayerBullet([shot_image], player.rect.midtop, all_objects, bullet_group)
+                # 玩家开火
+                fire_cd -= diff / 1000
+                if keys_pressed[FIRE_KEY]:
+                    if fire_cd <= 0:
+                        fire_cd = total_fire_cd
+                        PlayerBullet([self.shot_image], player.rect.midtop, all_objects, player_bullet_group)
 
-            # 检测子弹的命中
-            for sprite in enemy.sprites():
-                sprite.rect = sprite.large_rect
-            for one_enemy in pygame.sprite.groupcollide(enemy, bullet_group, False, True).keys():
-                if one_enemy.full_time <= 0:
-                    score_board.score += 10
-                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
-                              all_objects, explosion_group)
-                    one_enemy.kill()
+                # 检测子弹的命中
+                for sprite in enemy.sprites():
+                    sprite.rect = sprite.large_rect
+                for one_enemy in pygame.sprite.groupcollide(enemy, player_bullet_group, False, True).keys():
+                    if one_enemy.full_time <= 0:
+                        score_board.score += 10
+                        Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                                  one_enemy.rect.center,
+                                  all_objects, explosion_group)
+                        one_enemy.kill()
 
-            for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, False, False).keys():
-                if one_enemy.full_time <= 0:
-                    score_board.score += 10
-                    Explosion([explosion_image, pygame.transform.flip(explosion_image, 1, 1)], one_enemy.rect.center,
-                              all_objects, explosion_group)
-                    one_enemy.kill()
+                for one_enemy in pygame.sprite.groupcollide(enemy, explosion_group, False, False).keys():
+                    if one_enemy.full_time <= 0:
+                        score_board.score += 10
+                        Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                                  one_enemy.rect.center,
+                                  all_objects, explosion_group)
+                        one_enemy.kill()
 
-            for explosion_sprite in explosion_group.sprites():
-                if explosion_sprite.chain_time <= 0:
-                    explosion_group.remove(explosion_sprite)
+                for explosion_sprite in explosion_group.sprites():
+                    if explosion_sprite.chain_time <= 0:
+                        explosion_group.remove(explosion_sprite)
 
-            # 检测成绩调整难度
-            if 200 > score_board.score >= 100:
-                difficulty = 1
-                win_menu.score = score_board.score
-                playing = False
-                win = True
-            elif 300 > score_board.score >= 200:
-                difficulty = 2
-            elif 350 > score_board.score >= 300:
-                difficulty = 3
-            elif score_board.score >= 350:
-                win_menu.score = score_board.score
-                playing = False
-                win = True
+                # 检测成绩调整难度
+                if 200 > score_board.score >= 100:
+                    difficulty = 1
+                    win_menu.score = score_board.score
+                    playing = False
+                    win = True
+                elif 300 > score_board.score >= 200:
+                    difficulty = 2
+                elif 350 > score_board.score >= 300:
+                    difficulty = 3
+                elif score_board.score >= 350:
+                    win_menu.score = score_board.score
+                    playing = False
+                    win = True
 
-            # 如果敌人全都寄了，就再召唤一批
-            if len(enemy) == 0:
-                spawn_simple_enemy([enemy, all_objects], [enemy_image], difficulty)
+                # 如果敌人全都寄了，就再召唤一批
+                if len(enemy) == 0:
+                    spawn_simple_enemy([enemy, all_objects], [self.enemy_image], difficulty)
 
-            # 这里是绘制所有物体
-            all_objects.clear(screen, background)
-            dirty_rects.extend(all_objects.draw(screen))
+                # 这里是绘制所有物体
+                all_objects.clear(self.screen, self.background)
+                dirty_rects.extend(all_objects.draw(self.screen))
 
-            # 绘制帧率(如果设置了要显示帧率)
-            if show_fps:
-                fps_sprite.image = font.render("FPS: {:.2f}".format(clock.get_fps()), True, (0, 0, 255))
-                fps_sprite.rect = fps_sprite.image.get_rect()
-                # 设置这个帧率显示器在左下角
-                # 因为左上角要放得分，所以这里放在左下角
-                fps_sprite.rect.move_ip(0, SCREEN_RECT.height - fps_sprite.rect.height)
-                dirty_rects.append(fps_sprite.rect)
+                # 绘制帧率(如果设置了要显示帧率)
+                if show_fps:
+                    fps_view.fps = clock.get_fps()
+                else:
+                    fps_view.image = pygame.Surface((0, 0))
+
+            # 玩家死后只允许部分内容（after_player_dead组中的）被更新
+            if not playing and not win:
+                after_player_dead.update(diff / 1000)
+                dirty_rects.extend(after_player_dead.draw(self.screen))
+
+            if not playing and win:
+                after_player_win.update(diff / 1000)
+                dirty_rects.extend(after_player_win.draw(self.screen))
+
+            pygame.display.update(dirty_rects)
+            # 根据配置限制帧率
+            if MAX_RATE is not None:
+                diff = clock.tick(MAX_RATE)
             else:
-                fps_sprite.image = pygame.Surface((0, 0))
-                fps_sprite.rect = fps_sprite.image.get_rect()
+                # 只计算上一帧到这一帧的时间间隔，不等待
+                diff = clock.tick()
 
-        # 玩家死后只允许部分内容（after_player_dead组中的）被更新
-        if not playing and not win:
-            after_player_dead.update(diff / 1000)
-            dirty_rects.extend(after_player_dead.draw(screen))
 
-        if not playing and win:
-            after_player_win.update(diff / 1000)
-            dirty_rects.extend(after_player_win.draw(screen))
-
-        pygame.display.update(dirty_rects)
-        # 根据配置限制帧率
-        if MAX_RATE is not None:
-            diff = clock.tick(MAX_RATE)
-        else:
-            # 只计算上一帧到这一帧的时间间隔，不等待
-            diff = clock.tick()
-
+def main():
+    game = MainApp()
+    game.start()
     pygame.quit()
 
 
