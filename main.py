@@ -218,7 +218,7 @@ class Enemy(CommonSprite):
             # 如果允许飞机发射追踪弹，则产生追踪弹
             if self.chase:
                 # 那个0.75表示追踪0.75秒后不再追踪
-                self.bullets.append(HardEnemyBullet(images, self.rect.center, 0.75, *group))
+                self.bullets.append(HardEnemyBullet(images, self.rect.center, 1, *group))
             else:
                 self.bullets.append(EnemyBullet(images, self.rect.center, *group))
 
@@ -803,6 +803,8 @@ class MainApp:
         if self.shot_sound is not None:
             self.shot_sound.set_volume(0.1)
 
+        pygame.display.set_icon(self.plane_image)
+
         # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
         self.running = False
 
@@ -1074,6 +1076,7 @@ class MainApp:
                               boss_group.sprites()[0].rect.center,
                               all_objects, explosion_group, after_player_win)
                     boss_group.sprites()[0].kill()
+                    self.score += 200
                     playing = False
                     win = True
                     win_menu.text = f"You win! Score: {self.score}"
