@@ -1,5 +1,10 @@
 import math
 import random
+import threading
+import time
+
+import pygame.sprite
+
 import resource
 import widget
 from configure import *
@@ -37,10 +42,12 @@ class CommonSprite(pygame.sprite.Sprite):
         :param group: 该精灵所要添加到的组，可以有任意多个
         """
         super().__init__(*group)
+        if isinstance(images, pygame.Surface):
+            images = [images]
         self.images = images
         self.image_number = 0
         self.image = images[self.image_number]
-        self.rect = self.images[self.image_number].get_rect()
+        self.rect = self.image.get_rect()
         self.rect.center = center
         # 每隔多久轮播一次图片，单位：秒
         if not isinstance(change_time, float):
@@ -216,6 +223,161 @@ class Enemy(CommonSprite):
             one_bullet.kill()
         # 必须先清除子弹，再清除自己
         super().kill()
+
+
+class Boss(CommonSprite):
+    """
+    可怕的大boss
+    """
+
+    def __init__(self, images, bullet_image, fire_ball_image, large_fireball_image, group, bullet_group, no_disappear_bullet_group, boss_group):
+        super().__init__(images, (SCREEN_RECT.width / 2, 100), None, *group)
+        # 减小敌机的碰撞箱，降低撞到玩家的可能
+        self.rect.width = 80
+        self.rect.height = 60
+
+        self.direction = 1
+
+        self.skills = {1: self.chase_fire, 2: self.fire_balls, 3: self.many_bullets, 4: self.normal_attack,
+                       5: self.large_fireball}
+        self.skill_total = [5, 7, 10, 12.5, 15]
+        self.skill_cds = [5, 7, 10, 12.5, 0]
+        self.total_main_cd = 6
+        self.main_cd = 0
+
+        self.bullet_image = bullet_image
+        self.bullet_group = bullet_group
+        self.fire_ball_image = fire_ball_image
+        self.boss_group = boss_group
+        self.no_disappear_bullet_group = no_disappear_bullet_group
+        self.large_fireball_image = large_fireball_image
+        self.player_position = None
+
+    def update(self, dt, player_position=None, *args, **kwargs) -> None:
+        super().update(dt)
+        self.player_position = player_position
+        self.rect.move_ip(random.randint(0, 200) * dt * self.direction, 0)
+        if self.rect.right >= SCREEN_RECT.right:
+            self.rect.right = SCREEN_RECT.right
+            self.direction = -self.direction
+        if self.rect.left <= 0:
+            self.rect.left = 0
+            self.direction = -self.direction
+        self.rect.clamp(SCREEN_RECT)
+
+        for i in range(len(self.skill_cds)):
+            self.skill_cds[i] -= dt
+        self.main_cd -= dt
+
+        available = []
+        for i in range(len(self.skill_cds)):
+            if self.skill_cds[i] <= 0:
+                available.append(i + 1)
+        if available and random.random() < 0.1 and self.main_cd <= 0:
+            ch = random.choice(available)
+            threading.Thread(target=self.skills[ch]).start()
+            self.skill_cds[ch - 1] = self.skill_total[ch - 1]
+            self.main_cd = self.total_main_cd
+
+    def chase_fire(self):
+        """
+        追踪弹发射
+        """
+        HardEnemyBullet(self.bullet_image, (self.rect.centerx - 30, self.rect.centery), 1.5,
+                        *self.bullet_group).speed = 300
+        HardEnemyBullet(self.bullet_image, (self.rect.centerx + 30, self.rect.centery), 1.5,
+                        *self.bullet_group).speed = 300
+        HardEnemyBullet(self.bullet_image, (self.rect.centerx, self.rect.centery), 1.5,
+                        *self.bullet_group).speed = 300
+
+    def fire_balls(self):
+        """
+        发射火球
+        """
+        for i in range(0, 360, 20):
+            FireBall(self.fire_ball_image, self.rect.center, (math.cos(math.radians(i)), math.sin(math.radians(i))),
+                     self.boss_group,
+                     *self.bullet_group)
+
+    def normal_attack(self):
+        """
+        普通攻击，持续5秒内向前发射一颗子弹
+        :return: 无
+        """
+        for i in range(10):
+            EnemyBullet(self.bullet_image, (self.rect.centerx, self.rect.centery), self.boss_group, *self.bullet_group)
+            time.sleep(0.75)
+
+    def many_bullets(self):
+        """发射大量子弹"""
+        for i in range(0, 25):
+            if self.player_position is not None:
+                dis = math.sqrt((self.player_position[0] - self.rect.centerx) ** 2 + (
+                        self.player_position[1] - self.rect.centery) ** 2)
+                x = (self.player_position[0] - self.rect.centerx) / dis
+                y = (self.player_position[1] - self.rect.centery) / dis
+            else:
+                x = 0
+                y = 1
+            a = FireBall(self.bullet_image, (self.rect.centerx - 30, self.rect.centery), (x, y), self.boss_group,
+                         *self.bullet_group)
+            b = FireBall(self.bullet_image, (self.rect.centerx, self.rect.centery), (x, y), self.boss_group,
+                         *self.bullet_group)
+            c = FireBall(self.bullet_image, (self.rect.centerx + 30, self.rect.centery), (x, y), self.boss_group,
+                         *self.bullet_group)
+            a.speed = b.speed = c.speed = 300
+            time.sleep(0.05)
+
+    def large_fireball(self):
+        """
+        小火球不够。我们要更大，更大，更大的大大大大大大火球！
+        :return: 无
+        """
+        LargeFireBall(self.large_fireball_image, self.rect.center, self, self.boss_group, *self.no_disappear_bullet_group)
+
+
+class FireBall(CommonSprite):
+    """大火球！"""
+
+    def __init__(self, images, center, position, boss_group, *group):
+        super().__init__(images, center, boss_group, *group)
+        self.speed = 300
+        self.position = position
+
+    def update(self, dt, *args) -> None:
+        super().update(dt)
+        self.rect.move_ip(self.speed * dt * self.position[0], self.speed * dt * self.position[1])
+        if self.rect.top > SCREEN_RECT.bottom or self.rect.bottom < SCREEN_RECT.top or self.rect.left > SCREEN_RECT.right or self.rect.right < SCREEN_RECT.left:
+            self.kill()
+
+
+class LargeFireBall(CommonSprite):
+    def __init__(self, images, center, boss, boss_group, *group):
+        super().__init__(images, center, boss_group, *group)
+        self.speed = 0
+        self.a = 500  # 加速度: 500像素每秒
+        self.stay_time = 1.5
+        self.stay = True
+        self.boss = boss
+        self.towards = [0, 1]
+
+    def update(self, dt, player_position=None, *args) -> None:
+        super().update(dt)
+        self.stay_time -= dt
+        if self.stay_time <= 0:
+            if self.stay:
+                self.stay = False
+                self.towards[0] = (player_position[0] - self.rect.centerx) / math.sqrt(
+                    (player_position[0] - self.rect.centerx) ** 2 + (player_position[1] - self.rect.centery) ** 2)
+                self.towards[1] = (player_position[1] - self.rect.centery) / math.sqrt(
+                    (player_position[0] - self.rect.centerx) ** 2 + (player_position[1] - self.rect.centery) ** 2)
+
+            self.speed += self.a * dt
+            self.rect.move_ip(self.speed * dt * self.towards[0], self.speed * dt * self.towards[1])
+        else:
+            self.rect.update(self.boss.rect)
+        if self.rect.top > SCREEN_RECT.bottom:
+            self.kill()
 
 
 class Explosion(CommonSprite):
@@ -437,6 +599,37 @@ class FPSView(widget.Text):
         self.text = f"FPS: {self._fps}"
 
 
+class BossHealthBar(widget.Text):
+    """
+    用来显示boss血量的控件
+    用法：直接更改self.health，控件会自动重新渲染
+    """
+
+    def __init__(self, center, health, font='arial', *group):
+        """
+        创建一个boss血量显示控件
+        :param center: 控件的中心位置
+        :param font: 控件的字体，可以是加载好的pygame.font.Font，也可以是字体文件的路径
+        :param group: 控件所在的组
+        """
+        # 先放一个差不多长度的字符串作为待渲染字符串，方便计算控件rect的大小
+        super().__init__(text="Health: 100%", center=center, font=font, color=(255, 0, 0), font_size=30, group=group)
+        self.total_health = health
+        self._health = health
+
+    @property
+    def health(self):
+        return self._health
+
+    @health.setter
+    def health(self, new_health):
+        if self._health == new_health / self.total_health * 100:
+            return
+        self._health = new_health / self.total_health * 100
+        # 由于该类继承widget.Text，所以更改text属性，字会自动重新渲染
+        self.text = "Health: {:.1f}%".format(self._health)
+
+
 class Background(pygame.sprite.Sprite):
     """
     背景类，用来实现背景滚动
@@ -510,9 +703,15 @@ class MainApp:
         self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
         self.enemy_images = [resource.load(f"./data/enemy_{i}.png", True).convert_alpha() for i in range(1, 4)]
         self.boss_image = resource.load(f"./data/boss.png", True).convert_alpha()
+        self.total_boss_health = 100
+        self.boss_health = 100
+        self.boss_fight = False
 
         self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
         self.shot_image = resource.load('./data/shot.gif', True).convert_alpha()
+
+        self.fire_ball_image = resource.load("./data/fire_ball.png", False, self.shot_image).convert_alpha()
+        self.large_fireball_image = resource.load("./data/fireball_128.png", False, self.shot_image).convert_alpha()
 
         # 加载即使丢失也能用其他资源代替的资源
         self.fire_image = resource.load("data/fire.png", False, pygame.Surface((0, 0))).convert_alpha()
@@ -524,13 +723,6 @@ class MainApp:
         self.shot_sound = resource.load("./data/car_door.wav", False, None)
         if self.shot_sound is not None:
             self.shot_sound.set_volume(0.1)
-
-        # 加载背景音乐，并尝试播放
-        resource.load_bgm("./data/mus_anothermedium.ogg", False)
-        try:
-            pygame.mixer.music.play(-1)
-        except pygame.error:
-            pass
 
         # 这个控制变量很特殊，必须放在start外面，不然实现不了重玩
         self.running = False
@@ -545,6 +737,13 @@ class MainApp:
         self.screen.blit(self.background, (0, 0))
         # 先更新一次屏幕
         pygame.display.flip()
+
+        # 加载背景音乐，并尝试播放
+        resource.load_bgm("./data/mus_anothermedium.ogg", False)
+        try:
+            pygame.mixer.music.play(-1)
+        except pygame.error:
+            pass
 
         # 初始化游戏控制内容
         # 初始处于运行状态
@@ -567,6 +766,8 @@ class MainApp:
         after_player_win = pygame.sprite.RenderUpdates()
         # 存放暂停时允许更新的对象，一般只有帧率显示器和暂停界面
         paused_objects = pygame.sprite.RenderUpdates()
+
+        boss_render_group = pygame.sprite.RenderUpdates()
         # 用于控制帧率
         clock = pygame.time.Clock()
         # 初始不展示帧率
@@ -579,10 +780,10 @@ class MainApp:
         score_board = ScoreBoard((70, 50), self.font, all_objects)
         # 胜利界面
         # 先写个差不多长度的文字，反正不显示（因为需要在创建时计算rect的位置）
-        win_text = widget.Text(text="You Win! Score: 0", center=SCREEN_RECT.center, font=self.font_large,
-                               color=(255, 0, 0),
-                               font_size=50,
-                               group=[after_player_win])  # 仅在胜利界面展示
+        widget.Text(text="You Win! Score: 0", center=SCREEN_RECT.center, font=self.font_large,
+                    color=(255, 0, 0),
+                    font_size=50,
+                    group=[after_player_win])
         # 失败界面
         widget.Text(text="You Lose!", center=SCREEN_RECT.center, font=self.font_large, color=(255, 0, 0), font_size=50,
                     group=[after_player_dead])  # 仅在失败界面展示
@@ -596,6 +797,9 @@ class MainApp:
                       command=self.replay_game)  # 在胜利或失败界面展示
         # 用于显示帧率的对象
         fps_view = FPSView((50, SCREEN_RECT.height - 35), self.font, all_objects, paused_objects)
+        # 血条
+        health_bar = BossHealthBar((SCREEN_RECT.width / 2, 25), self.total_boss_health, self.font, boss_render_group,
+                                   after_player_dead, after_player_win)
         # 难度，默认为0
         difficulty = 0
         # 玩家
@@ -608,6 +812,10 @@ class MainApp:
         player_bullet_group = pygame.sprite.Group()
         # 敌方子弹组
         enemy_bullet_group = pygame.sprite.Group()
+        # 碰到我方也不会消失的子弹组
+        enemy_no_disappear_group = pygame.sprite.Group()
+        # boss
+        boss_group = pygame.sprite.Group()
         # 我方与敌方子弹组分开是为了方便碰撞检测
         multi_keys = []
 
@@ -638,7 +846,8 @@ class MainApp:
                     if not fullscreen:
                         screen_backup = self.screen.copy()
                         self.screen = pygame.display.set_mode(SCREEN_RECT.size, pygame.FULLSCREEN,
-                                                              pygame.display.mode_ok(SCREEN_RECT.size, pygame.FULLSCREEN, 32)
+                                                              pygame.display.mode_ok(SCREEN_RECT.size,
+                                                                                     pygame.FULLSCREEN, 32)
                                                               )
                         self.screen.blit(screen_backup, (0, 0))
                     else:
@@ -748,14 +957,62 @@ class MainApp:
                     difficulty = 2
                 elif 350 > score_board.score >= 300:
                     difficulty = 3
-                elif score_board.score >= 350:
-                    # 分数大于350的话胜利
-                    win_text.text = f"You win! Score: {score_board.score}"
+                if score_board.score >= 1 and not self.boss_fight:
+                    self.boss_fight = True
+
+                # Boss战相关内容
+                # 为了减低难度，Boss血量是一个全局变量，跨游戏继承
+                # 只要打到了boss，就算死了也会直接进入boss战
+                if self.boss_fight and len(boss_group) == 0:
+                    # 尝试切换音乐
+                    resource.load_bgm("./data/asgore.mp3", False)
+                    try:
+                        pygame.mixer.music.set_volume(0.3)
+                        pygame.mixer.music.play(-1, 0, 5000)
+                    except pygame.error:
+                        pass
+                    Boss(images=[self.boss_image], bullet_image=[pygame.transform.flip(self.shot_image, 1, 1)],
+                         fire_ball_image=[self.fire_ball_image], large_fireball_image=self.large_fireball_image, group=(boss_group, boss_render_group),
+                         no_disappear_bullet_group=[all_objects, enemy_no_disappear_group, boss_render_group, after_player_dead],
+                         bullet_group=[all_objects, enemy_bullet_group, boss_render_group], boss_group=boss_group)
+                # Boss死亡，我方胜利
+                if self.boss_health <= 0:
+                    Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                              boss_group.sprites()[0].rect.center,
+                              all_objects, explosion_group)
+                    boss_group.sprites()[0].kill()
                     playing = False
                     win = True
+                # Boss存在时的内容
+                if self.boss_fight:
+                    # 更新boss血条
+                    health_bar.health = self.boss_health
+                    # 我方子弹cd减少
+                    player.total_fire_cd = 0.05
+
+                    # Boss与我方子弹碰撞
+                    if pygame.sprite.groupcollide(boss_group, player_bullet_group, False, True):
+                        self.boss_health -= 1
+                    # Boss与我方碰撞
+                    if pygame.sprite.spritecollide(player, boss_group, False):
+                        Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                                  player.rect.center,
+                                  after_player_dead, explosion_group, all_objects)
+                        if not debug:
+                            player.kill()
+                            playing = False
+                        self.boss_health -= 10
+                    # Boss发出的不消失的攻击内容与我方碰撞
+                    if pygame.sprite.spritecollide(player, enemy_no_disappear_group, False):
+                        Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
+                                  player.rect.center,
+                                  after_player_dead, explosion_group, all_objects)
+                        if not debug:
+                            player.kill()
+                            playing = False
 
                 # 如果敌人全都寄了，就再召唤一批
-                if len(enemy) == 0:
+                if len(enemy) == 0 and not self.boss_fight:
                     spawn_simple_enemy([enemy, all_objects], self.enemy_images, difficulty)
 
                 # 这里是绘制所有物体
@@ -763,6 +1020,11 @@ class MainApp:
                 all_objects.clear(self.screen, self.background)
                 # 把这一帧修改了的区域放到脏区域里
                 dirty_rects.extend(all_objects.draw(self.screen))
+                if self.boss_fight:
+                    # 更新Boss相关内容
+                    boss_group.update(diff / 1000, player.rect.center)
+                    boss_render_group.clear(self.screen, self.background)
+                    dirty_rects.extend(boss_render_group.draw(self.screen))
 
             # 绘制帧率(如果设置了要显示帧率)
             if show_fps:
@@ -773,11 +1035,18 @@ class MainApp:
             # 玩家死后只允许部分内容（after_player_dead组中的）被更新
             if not playing and not win:
                 after_player_dead.update(diff / 1000)
+                after_player_dead.clear(self.screen, self.background)
                 dirty_rects.extend(after_player_dead.draw(self.screen))
+                if self.boss_fight:
+                    try:
+                        pygame.mixer.music.stop()
+                    except pygame.error:
+                        pass
 
             # 玩家赢后只允许after_player_win组中的内容被更新
             if not playing and win:
                 after_player_win.update(diff / 1000)
+                after_player_win.clear(self.screen, self.background)
                 dirty_rects.extend(after_player_win.draw(self.screen))
 
             # 暂停时仅允许paused_objects组中的内容被更新
@@ -801,6 +1070,12 @@ class MainApp:
         :return:无
         """
         self.running = False
+        if self.boss_health == 0:
+            self.boss_health = self.total_boss_health
+            self.boss_fight = False
+        if self.boss_fight:
+            # 死亡惩罚
+            self.boss_health = min(self.boss_health + 25, self.total_boss_health)
         self.start()
 
 
