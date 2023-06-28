@@ -93,6 +93,9 @@ class Player(CommonSprite):
         self.total_fire_cd = 0.25
         self.fire_cd = 0
 
+        self.total_chase_cd = 999999999
+        self.chase_cd = 5
+
     # noinspection PyTypeChecker
     def move(self, vertical_direction=0, horizontal_direction=0,
              dt=1 / MAX_RATE if MAX_RATE is not None else 1 / 60) -> None:
@@ -136,9 +139,16 @@ class Player(CommonSprite):
             # 生成子弹
             PlayerBullet(images, self.rect.midtop, *group)
 
+    def chase_fire(self, images, *group) -> None:
+        if self.chase_cd <= 0:
+            self.chase_cd = self.total_chase_cd
+            ChaseBullet(images, self.rect.midtop, *group)
+
     def update(self, dt, *args):
         super().update(dt, *args)
         self.fire_cd -= dt
+        self.chase_cd -= dt
+        print(self.chase_cd)
 
 
 class Enemy(CommonSprite):
@@ -230,7 +240,8 @@ class Boss(CommonSprite):
     可怕的大boss
     """
 
-    def __init__(self, images, bullet_image, fire_ball_image, large_fireball_image, group, bullet_group, no_disappear_bullet_group, boss_group, plane_images):
+    def __init__(self, images, bullet_image, fire_ball_image, large_fireball_image, group, bullet_group,
+                 no_disappear_bullet_group, boss_group, plane_images):
         super().__init__(images, (SCREEN_RECT.width / 2, 100), None, *group)
         # 减小敌机的碰撞箱，降低撞到玩家的可能
         self.left_limit = 0
@@ -337,7 +348,8 @@ class Boss(CommonSprite):
         小火球不够。我们要更大，更大，更大的大大大大大大火球！
         :return: 无
         """
-        LargeFireBall(self.large_fireball_image, self.rect.center, self, self.boss_group, *self.no_disappear_bullet_group)
+        LargeFireBall(self.large_fireball_image, self.rect.center, self, self.boss_group,
+                      *self.no_disappear_bullet_group)
 
     def plane_attack(self):
         """
@@ -403,6 +415,7 @@ class BossPlane(Enemy):
     """
     Boss召唤出的小替身飞机，无敌，一段时间后自动死亡
     """
+
     def __init__(self, images, center, boss: Boss, group, bullet_images, bullet_group):
         super().__init__(images, *group)
         self.rect.center = center
@@ -475,6 +488,7 @@ class PlayerBullet(CommonSprite):
         super().__init__(images, center, None, *group)
         # 速度：500像素/秒 方向：上
         self.speed = -500
+        self.damage = 1
 
     def update(self, dt, *args) -> None:
         super().update(dt, *args)
@@ -484,6 +498,29 @@ class PlayerBullet(CommonSprite):
         # 因为它只能向上飞，不存在从左/右侧离开了屏幕的情况
         if self.rect.bottom < SCREEN_RECT.top:
             self.kill()
+
+
+class ChaseBullet(PlayerBullet):
+    def __init__(self, images, center, *group):
+        super().__init__(images, center, *group)
+        print(group)
+
+    def update(self, dt, _=None, boss_position=None, *args):
+
+        self.damage = 50
+        if boss_position is None:
+            super().update(dt, *args)
+            return
+        else:
+            dis = math.sqrt((self.rect.centerx - boss_position[0]) ** 2 +
+                            (self.rect.centery - boss_position[1]) ** 2)
+            # 如果子弹追踪时间没有结束，就按计算出的方向移动
+            self.rect.move_ip(-self.speed * dt * (boss_position[0] - self.rect.centerx) / dis,
+                              -self.speed * dt * (boss_position[1] - self.rect.centery) / dis)
+            # 如果子弹出界就删掉
+            if self.rect.top >= SCREEN_RECT.bottom or self.rect.bottom <= SCREEN_RECT.top or \
+                    self.rect.left >= SCREEN_RECT.right or self.rect.right <= SCREEN_RECT.left:
+                self.kill()
 
 
 class EnemyBullet(CommonSprite):
@@ -919,7 +956,13 @@ class MainApp:
                             diff / 1000)
 
                 # 更新所有非暂停时更新的游戏对象
-                all_objects.update(diff / 1000, player.rect.center)
+                if not self.boss_fight:
+                    all_objects.update(diff / 1000, player.rect.center)
+                else:
+                    try:
+                        all_objects.update(diff / 1000, player.rect.center, boss.rect.center)
+                    except UnboundLocalError:
+                        all_objects.update(diff / 1000, player.rect.center)
 
                 # 以下为碰撞检测
                 # 四个部分： 玩家与敌机的碰撞，玩家与敌方子弹的碰撞，敌机与我方子弹的碰撞，敌机与爆炸特效的碰撞
@@ -1012,10 +1055,14 @@ class MainApp:
                         pygame.mixer.music.play(-1, 0, 5000)
                     except pygame.error:
                         pass
-                    Boss(images=[self.boss_image], bullet_image=[pygame.transform.flip(self.shot_image, 1, 1)],
-                         fire_ball_image=[self.fire_ball_image], large_fireball_image=self.large_fireball_image, group=(boss_group, boss_render_group),
-                         no_disappear_bullet_group=[all_objects, enemy_no_disappear_group, boss_render_group, after_player_dead],
-                         bullet_group=[all_objects, enemy_bullet_group, boss_render_group], boss_group=boss_group, plane_images=self.enemy_images)
+                    boss = Boss(images=[self.boss_image], bullet_image=[pygame.transform.flip(self.shot_image, 1, 1)],
+                                fire_ball_image=[self.fire_ball_image], large_fireball_image=self.large_fireball_image,
+                                group=(boss_group, boss_render_group),
+                                no_disappear_bullet_group=[all_objects, enemy_no_disappear_group, boss_render_group,
+                                                           after_player_dead],
+                                bullet_group=[all_objects, enemy_bullet_group, boss_render_group],
+                                boss_group=boss_group,
+                                plane_images=self.enemy_images)
                 # Boss死亡，我方胜利
                 if self.boss_health <= 0:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
@@ -1030,10 +1077,18 @@ class MainApp:
                     health_bar.health = self.boss_health
                     # 我方子弹cd减少
                     player.total_fire_cd = 0.05
+                    player.total_chase_cd = 5
+
+                    keys = pygame.key.get_pressed()
+                    if keys[CHASE_KEY] or pygame.mouse.get_pressed(3)[2]:
+                        player.chase_fire(self.shot_image, player_bullet_group, all_objects)
 
                     # Boss与我方子弹碰撞
-                    if pygame.sprite.groupcollide(boss_group, player_bullet_group, False, True):
-                        self.boss_health -= 1
+                    bullets = pygame.sprite.groupcollide(player_bullet_group, boss_group, False, False)
+                    for bullet in bullets.keys():
+                        self.boss_health -= bullet.damage
+                        bullet.kill()
+
                     # Boss与我方碰撞
                     if pygame.sprite.spritecollide(player, boss_group, False):
                         Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
@@ -1063,7 +1118,7 @@ class MainApp:
                 dirty_rects.extend(all_objects.draw(self.screen))
                 if self.boss_fight:
                     # 更新Boss相关内容
-                    boss_group.update(diff / 1000, player.rect.center)
+                    boss_group.update(diff / 1000, player.rect.center, boss.rect.center)
                     boss_render_group.clear(self.screen, self.background)
                     dirty_rects.extend(boss_render_group.draw(self.screen))
 
@@ -1111,7 +1166,7 @@ class MainApp:
         :return:无
         """
         self.running = False
-        if self.boss_health == 0:
+        if self.boss_health <= 0:
             self.boss_health = self.total_boss_health
             self.boss_fight = False
         if self.boss_fight:
