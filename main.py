@@ -230,18 +230,21 @@ class Boss(CommonSprite):
     可怕的大boss
     """
 
-    def __init__(self, images, bullet_image, fire_ball_image, large_fireball_image, group, bullet_group, no_disappear_bullet_group, boss_group):
+    def __init__(self, images, bullet_image, fire_ball_image, large_fireball_image, group, bullet_group, no_disappear_bullet_group, boss_group, plane_images):
         super().__init__(images, (SCREEN_RECT.width / 2, 100), None, *group)
         # 减小敌机的碰撞箱，降低撞到玩家的可能
+        self.left_limit = 0
+        self.right_limit = SCREEN_RECT.width
+
         self.rect.width = 80
         self.rect.height = 60
 
         self.direction = 1
 
         self.skills = {1: self.chase_fire, 2: self.fire_balls, 3: self.many_bullets, 4: self.normal_attack,
-                       5: self.large_fireball}
-        self.skill_total = [5, 7, 10, 12.5, 15]
-        self.skill_cds = [5, 7, 10, 12.5, 0]
+                       5: self.large_fireball, 6: self.plane_attack}
+        self.skill_total = [5, 7, 10, 12.5, 15, 35]
+        self.skill_cds = [5, 7, 10, 12.5, 15, 20]
         self.total_main_cd = 6
         self.main_cd = 0
 
@@ -252,16 +255,17 @@ class Boss(CommonSprite):
         self.no_disappear_bullet_group = no_disappear_bullet_group
         self.large_fireball_image = large_fireball_image
         self.player_position = None
+        self.plane_images = plane_images
 
     def update(self, dt, player_position=None, *args, **kwargs) -> None:
         super().update(dt)
         self.player_position = player_position
         self.rect.move_ip(random.randint(0, 200) * dt * self.direction, 0)
-        if self.rect.right >= SCREEN_RECT.right:
-            self.rect.right = SCREEN_RECT.right
+        if self.rect.right >= self.right_limit:
+            self.rect.right = self.right_limit
             self.direction = -self.direction
-        if self.rect.left <= 0:
-            self.rect.left = 0
+        if self.rect.left <= self.left_limit:
+            self.rect.left = self.left_limit
             self.direction = -self.direction
         self.rect.clamp(SCREEN_RECT)
 
@@ -275,7 +279,7 @@ class Boss(CommonSprite):
                 available.append(i + 1)
         if available and random.random() < 0.1 and self.main_cd <= 0:
             ch = random.choice(available)
-            threading.Thread(target=self.skills[ch]).start()
+            threading.Thread(target=self.skills[ch], daemon=True).start()
             self.skill_cds[ch - 1] = self.skill_total[ch - 1]
             self.main_cd = self.total_main_cd
 
@@ -305,7 +309,7 @@ class Boss(CommonSprite):
         :return: 无
         """
         for i in range(10):
-            EnemyBullet(self.bullet_image, (self.rect.centerx, self.rect.centery), self.boss_group, *self.bullet_group)
+            EnemyBullet(self.bullet_image, (self.rect.centerx, self.rect.centery), *self.bullet_group)
             time.sleep(0.75)
 
     def many_bullets(self):
@@ -334,6 +338,21 @@ class Boss(CommonSprite):
         :return: 无
         """
         LargeFireBall(self.large_fireball_image, self.rect.center, self, self.boss_group, *self.no_disappear_bullet_group)
+
+    def plane_attack(self):
+        """
+        替身攻击！
+        :return: 无
+        """
+        self.left_limit = 120
+        self.right_limit = SCREEN_RECT.width - 120
+        BossPlane(random.choice(self.plane_images), (50, 100), self, self.no_disappear_bullet_group,
+                  self.bullet_image, self.bullet_group)
+        BossPlane(random.choice(self.plane_images), (SCREEN_RECT.width - 50, 100), self, self.no_disappear_bullet_group,
+                  self.bullet_image, self.bullet_group)
+        time.sleep(15)
+        self.left_limit = 0
+        self.right_limit = SCREEN_RECT.width
 
 
 class FireBall(CommonSprite):
@@ -378,6 +397,28 @@ class LargeFireBall(CommonSprite):
             self.rect.update(self.boss.rect)
         if self.rect.top > SCREEN_RECT.bottom:
             self.kill()
+
+
+class BossPlane(Enemy):
+    """
+    Boss召唤出的小替身飞机，无敌，一段时间后自动死亡
+    """
+    def __init__(self, images, center, boss: Boss, group, bullet_images, bullet_group):
+        super().__init__(images, *group)
+        self.rect.center = center
+        self.live_time = 15
+        self.boss = boss
+        self.fire_cd = self.total_fire_cd = 1
+        self.chase = False
+        self.bullet_image = bullet_images
+        self.bullet_group = bullet_group
+
+    def update(self, dt, *args):
+        self.live_time -= dt
+        self.fire_cd -= dt
+        if self.live_time <= 0:
+            self.kill()
+        self.fire(self.bullet_image, self.bullet_group)
 
 
 class Explosion(CommonSprite):
@@ -974,7 +1015,7 @@ class MainApp:
                     Boss(images=[self.boss_image], bullet_image=[pygame.transform.flip(self.shot_image, 1, 1)],
                          fire_ball_image=[self.fire_ball_image], large_fireball_image=self.large_fireball_image, group=(boss_group, boss_render_group),
                          no_disappear_bullet_group=[all_objects, enemy_no_disappear_group, boss_render_group, after_player_dead],
-                         bullet_group=[all_objects, enemy_bullet_group, boss_render_group], boss_group=boss_group)
+                         bullet_group=[all_objects, enemy_bullet_group, boss_render_group], boss_group=boss_group, plane_images=self.enemy_images)
                 # Boss死亡，我方胜利
                 if self.boss_health <= 0:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
