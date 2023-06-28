@@ -254,9 +254,9 @@ class Boss(CommonSprite):
 
         self.skills = {1: self.chase_fire, 2: self.fire_balls, 3: self.many_bullets, 4: self.normal_attack,
                        5: self.large_fireball, 6: self.plane_attack}
-        self.skill_total = [5, 7, 10, 12.5, 15, 35]
-        self.skill_cds = [5, 7, 10, 12.5, 15, 20]
-        self.total_main_cd = 6
+        self.skill_total = [15, 10, 10, 12.5, 10, 17]
+        self.skill_cds = [15, 10, 10, 12.5, 5, 17]
+        self.total_main_cd = 5
         self.main_cd = 0
 
         self.bullet_image = bullet_image
@@ -559,11 +559,11 @@ class HardEnemyBullet(EnemyBullet):
         # 子弹仅在一段时间内可以追踪我方
         # 要是一直能追踪我方就真成超级战神了
         if chase_time is None:
-            chase_time = 0.75
+            chase_time = 1
         self.chase_time = chase_time
         # 这个用来存储追踪的最后一帧的方向，子弹失去追踪特性之后会一直沿这个方向飞行
         self.dx = self.dy = None
-        self.speed = 225
+        self.speed = 250
 
     def update(self, dt: float, player_position: tuple[float, float] = None, *args) -> None:
         # 如果没有传入我方飞机的位置，就不追踪了，直接按普通子弹的方法飞行
@@ -781,8 +781,9 @@ class MainApp:
         self.plane_image = resource.load("./data/plane_1.png", True).convert_alpha()
         self.enemy_images = [resource.load(f"./data/enemy_{i}.png", True).convert_alpha() for i in range(1, 4)]
         self.boss_image = resource.load(f"./data/boss.png", True).convert_alpha()
-        self.total_boss_health = 100
-        self.boss_health = 100
+        self.total_boss_health = 1000
+        self.boss_health = 1000
+        self.score = 0
         self.boss_fight = False
 
         self.explosion_image = resource.load("./data/explosion_1.gif", True).convert_alpha()
@@ -858,10 +859,10 @@ class MainApp:
         score_board = ScoreBoard((70, 50), self.font, all_objects)
         # 胜利界面
         # 先写个差不多长度的文字，反正不显示（因为需要在创建时计算rect的位置）
-        widget.Text(text="You Win! Score: 0", center=SCREEN_RECT.center, font=self.font_large,
-                    color=(255, 0, 0),
-                    font_size=50,
-                    group=[after_player_win])
+        win_menu = widget.Text(text="You Win! Score: 0", center=SCREEN_RECT.center, font=self.font_large,
+                               color=(255, 0, 0),
+                               font_size=50,
+                               group=[after_player_win])
         # 失败界面
         widget.Text(text="You Lose!", center=SCREEN_RECT.center, font=self.font_large, color=(255, 0, 0), font_size=50,
                     group=[after_player_dead])  # 仅在失败界面展示
@@ -877,7 +878,7 @@ class MainApp:
         fps_view = FPSView((50, SCREEN_RECT.height - 35), self.font, all_objects, paused_objects)
         # 血条
         health_bar = BossHealthBar((SCREEN_RECT.width / 2, 25), self.total_boss_health, self.font, boss_render_group,
-                                   after_player_dead, after_player_win)
+                                   after_player_win)
         # 难度，默认为0
         difficulty = 0
         # 玩家
@@ -1041,7 +1042,7 @@ class MainApp:
                     difficulty = 2
                 elif 350 > score_board.score >= 300:
                     difficulty = 3
-                if score_board.score >= 1 and not self.boss_fight:
+                if score_board.score >= 350 and not self.boss_fight:
                     self.boss_fight = True
 
                 # Boss战相关内容
@@ -1063,14 +1064,19 @@ class MainApp:
                                 bullet_group=[all_objects, enemy_bullet_group, boss_render_group],
                                 boss_group=boss_group,
                                 plane_images=self.enemy_images)
+                    if self.score != 0:
+                        score_board.score = self.score
+                    else:
+                        self.score = score_board.score
                 # Boss死亡，我方胜利
                 if self.boss_health <= 0:
                     Explosion([self.explosion_image, pygame.transform.flip(self.explosion_image, 1, 1)],
                               boss_group.sprites()[0].rect.center,
-                              all_objects, explosion_group)
+                              all_objects, explosion_group, after_player_win)
                     boss_group.sprites()[0].kill()
                     playing = False
                     win = True
+                    win_menu.text = f"You win! Score: {self.score}"
                 # Boss存在时的内容
                 if self.boss_fight:
                     # 更新boss血条
@@ -1081,7 +1087,7 @@ class MainApp:
 
                     keys = pygame.key.get_pressed()
                     if keys[CHASE_KEY] or pygame.mouse.get_pressed(3)[2]:
-                        player.chase_fire(self.shot_image, player_bullet_group, all_objects)
+                        player.chase_fire(self.fire_ball_image, player_bullet_group, all_objects)
 
                     # Boss与我方子弹碰撞
                     bullets = pygame.sprite.groupcollide(player_bullet_group, boss_group, False, False)
@@ -1168,6 +1174,7 @@ class MainApp:
         self.running = False
         if self.boss_health <= 0:
             self.boss_health = self.total_boss_health
+            self.score = 0
             self.boss_fight = False
         if self.boss_fight:
             # 死亡惩罚
